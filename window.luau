@@ -1,7 +1,463 @@
 --!strict
 -- Agent Statusline — window half.
--- Zero-work chrome formatters (4 ms budget) returning prebuilt upvalues; a
--- 5 s tern.timer watches tern.kv "asl/snapshot".seq and calls
--- tern.chrome.refresh() on change. Palette commands and provider gating via
--- cx.agents:list() land in later phases.
-tern.log.info("agent-statusline window loaded")
+-- ZERO-WORK chrome formatters (4 ms budget): segments and the quota widget
+-- are COMPOSED FROM PREBUILT UPVALUES per focused pane — no tern.kv, no
+-- agents:list inside a formatter. A 5 s tern.timer watches tern.kv
+-- "asl/snapshot".seq and refreshes chrome on change (or when the rendered
+-- minute rolls over, for the clock chip). Provider gating via
+-- cx.agents:list() runs ONLY in timer/event callbacks (60 s tick +
+-- focus/agent_state/window_start); the gate maps AgentBlock.model per pane,
+-- and a pane with no recognized agent shows all key-bearing providers.
+local format = require("./lib/format")
+local windows = require("./lib/windows")
+
+type AslWindow = { label: string, usagePct: number, elapsedPct: number, paceOverSec: number, resetMs: number }
+
+-- ── prebuilt chrome pieces (written by timer callbacks, read by formatters)
+local segClock: any? = nil
+local segPrayer: any? = nil
+local segMoney: any? = nil
+local segZai: any? = nil
+local segOpen: any? = nil
+local widgetMoneyRows: { any } = tern.json.array({})
+local widgetZaiRows: { any } = tern.json.array({})
+local widgetOpenRows: { any } = tern.json.array({})
+local widgetPrayerRow: any? = nil
+local widgetZaiBar: any? = nil -- { value, text }
+local widgetOpenBar: any? = nil
+local widgetDigest: string? = nil
+local snapshot: any = nil
+local lastSeq = -1
+local lastMinuteKey = ""
+-- pane id → provider gate ("zai" | "opencode"); missing = show all key-bearing
+local providerByPane: { [number]: string } = {}
+
+local EXPAND = "plugin.agent-statusline.expand"
+
+local function epochMs(): number
+	return os.time() * 1000
+end
+
+-- Window length for a stored quota window (shared helper in lib/windows).
+local function windowLen(w: AslWindow): number
+	return windows.lenFor(w)
+end
+
+local function fmtMoney(usd: number): string
+	return "$" .. format.formatMoney(usd)
+end
+
+-- ── gating (timer/event callbacks only) ─────────────────────────────────
+local function gateFromAgents(cx: any)
+	local ok, agents = pcall(function()
+		return cx.agents:list()
+	end)
+	if not ok or type(agents) ~= "table" then
+		return
+	end
+	local map: { [number]: string } = {}
+	for _, a in agents do
+		if type(a) == "table" and type(a.pane) == "number" and type(a.model) == "string" then
+			local m = (a.model :: string):lower()
+			if m:find("zai", 1, true) ~= nil or m:find("glm", 1, true) ~= nil then
+				map[a.pane] = "zai"
+			elseif m:find("opencode", 1, true) ~= nil then
+				map[a.pane] = "opencode"
+			end
+		end
+	end
+	providerByPane = map
+end
+
+local function gateAllowed(paneId: number?, provider: string): boolean
+	local gate = if paneId ~= nil then providerByPane[paneId] else nil
+	return gate == nil or gate == provider
+end
+
+-- ── rebuild (timer callbacks only) ──────────────────────────────────────
+local function moneyRowsFrom(money: any): { any }
+	local rows: { any } = tern.json.array({})
+	if type(money) ~= "table" then
+		return rows
+	end
+	local spec: { any } = {
+		{ lbl = "REPO", w = money.repo },
+		{ lbl = "DAY", w = money.day },
+		{ lbl = "7DAY", w = money.d7 },
+		{ lbl = "30DAY", w = money.d30 },
+	}
+	for _, r in spec do
+		if type(r.w) == "table" and type(r.w.usd) == "number" then
+			rows[#rows + 1] = {
+				label = r.lbl,
+				text = fmtMoney(r.w.usd)
+					.. (if type(r.w.tokens) == "number" then " (" .. format.fmtTokens(r.w.tokens) .. ")" else ""),
+				tone = "ok",
+			}
+		end
+	end
+	if type(money.sub) == "number" then
+		rows[#rows + 1] = { label = "sub", text = fmtMoney(money.sub), tone = "muted" }
+	end
+	return rows
+end
+
+local function windowRowsFrom(providerLabel: string, data: any, now: number): { any }
+	local rows: { any } = tern.json.array({})
+	if type(data) ~= "table" or type(data.windows) ~= "table" then
+		return rows
+	end
+	for _, w in data.windows do
+		if type(w) == "table" and type(w.usagePct) == "number" then
+			local len = windowLen(w)
+			rows[#rows + 1] = {
+				label = providerLabel .. " " .. w.label,
+				text = math.floor(w.usagePct + 0.5) .. "%/" .. math.floor((w.elapsedPct or 0) + 0.5) .. "%"
+					.. " ("
+					.. windows.paceText(len, w.usagePct, w.elapsedPct or 0)
+					.. " · "
+					.. format.formatReset(w.resetMs, now)
+					.. " · "
+					.. format.formatResetAbs(w.resetMs, now)
+					.. ")",
+				tone = windows.heat(w.usagePct, (w.paceOverSec or 0) > 0),
+			}
+		end
+	end
+	return rows
+end
+
+local function barFrom(data: any): any?
+	if type(data) ~= "table" or type(data.windows) ~= "table" then
+		return nil
+	end
+	local w = data.windows[1]
+	if type(w) ~= "table" or type(w.usagePct) ~= "number" then
+		return nil
+	end
+	return {
+		value = math.max(0, math.min(1, w.usagePct / 100)),
+		text = w.label .. " " .. math.floor(w.usagePct + 0.5) .. "%",
+	}
+end
+
+local function providerSegment(providerLabel: string, data: any): any?
+	if type(data) ~= "table" or type(data.windows) ~= "table" or #data.windows == 0 then
+		return nil
+	end
+	local w = data.windows[1]
+	if type(w) ~= "table" or type(w.usagePct) ~= "number" then
+		return nil
+	end
+	local len = windowLen(w)
+	local pace = windows.paceText(len, w.usagePct, w.elapsedPct or 0)
+	local text = providerLabel .. " " .. w.label .. " " .. math.floor(w.usagePct + 0.5) .. "%"
+		.. (if pace ~= "" then " · " .. pace else "")
+	return {
+		icon = "gauge",
+		text = text,
+		tone = windows.heat(w.usagePct, (w.paceOverSec or 0) > 0),
+		command = EXPAND,
+	}
+end
+
+local function rebuild()
+	local now = epochMs()
+	if snapshot == nil then
+		return
+	end
+	local d = snapshot.deen
+	local m = snapshot.money
+
+	segClock = {
+		icon = "clock",
+		text = format.formatWeekday(now) .. " " .. format.formatClock(now),
+		tone = "accent",
+		command = EXPAND,
+	}
+
+	segPrayer = nil
+	if type(d) == "table" and type(d.nextPrayer) == "table" then
+		local np = d.nextPrayer
+		local timeStr = ""
+		if type(d.prayers) == "table" then
+			for _, p in d.prayers do
+				if p.name == np.name then
+					timeStr = p.time
+					break
+				end
+			end
+		end
+		local remainingSec = math.max(0, (np.inSec or 0) - math.floor((now - (snapshot.updatedMs or now)) / 1000))
+		segPrayer = {
+			icon = "clock",
+			text = np.name
+				.. (if timeStr ~= "" then " " .. timeStr else "")
+				.. " ("
+				.. format.formatReset(now + remainingSec * 1000, now)
+				.. ")",
+			tone = "ok",
+			command = EXPAND,
+		}
+		widgetPrayerRow = {
+			label = "next",
+			text = np.name .. " (" .. format.formatReset(now + remainingSec * 1000, now) .. ")",
+			tone = "ok",
+		}
+	else
+		widgetPrayerRow = nil
+	end
+
+	segMoney = nil
+	if type(m) == "table" and type(m.day) == "table" and type(m.day.usd) == "number" then
+		segMoney = { icon = "stack", text = "DAY " .. fmtMoney(m.day.usd), tone = "ok", command = EXPAND }
+	end
+	widgetMoneyRows = moneyRowsFrom(m)
+
+	segZai = providerSegment("zai", snapshot.zai)
+	segOpen = providerSegment("opencode", snapshot.opencode)
+	widgetZaiRows = windowRowsFrom("zai", snapshot.zai, now)
+	widgetOpenRows = windowRowsFrom("opencode", snapshot.opencode, now)
+	widgetZaiBar = barFrom(snapshot.zai)
+	widgetOpenBar = barFrom(snapshot.opencode)
+
+	local digest: { string } = {}
+	if type(m) == "table" and type(m.day) == "table" and type(m.day.usd) == "number" then
+		digest[#digest + 1] = "DAY " .. fmtMoney(m.day.usd)
+	end
+	if widgetPrayerRow then
+		digest[#digest + 1] = (widgetPrayerRow :: any).text
+	end
+	widgetDigest = if #digest > 0 then table.concat(digest, " · ") else nil
+
+	lastMinuteKey = os.date("%a%H:%M", math.floor(now / 1000)) :: string
+end
+
+-- ── formatters: compose per focused pane from upvalues (4 ms budget) ────
+tern.chrome.status(function(pane)
+	local pid = if pane ~= nil then pane.pane else nil
+	local segs: { any } = {}
+	if segClock then
+		segs[#segs + 1] = segClock
+	end
+	if segPrayer then
+		segs[#segs + 1] = segPrayer
+	end
+	if segMoney then
+		segs[#segs + 1] = segMoney
+	end
+	if segZai and gateAllowed(pid, "zai") then
+		segs[#segs + 1] = segZai
+	end
+	if segOpen and gateAllowed(pid, "opencode") then
+		segs[#segs + 1] = segOpen
+	end
+	return if #segs > 0 then segs else nil
+end)
+
+tern.chrome.widget("quota", {
+	name = "Agent quota meter",
+	description = "Rolling quota window usage, money windows and next prayer.",
+	icon = "gauge",
+	styles = { "bar", "text" },
+	render = function(pane)
+		local pid = if pane ~= nil then pane.pane else nil
+		local bar = nil
+		if gateAllowed(pid, "zai") and widgetZaiBar then
+			bar = widgetZaiBar
+		elseif gateAllowed(pid, "opencode") and widgetOpenBar then
+			bar = widgetOpenBar
+		end
+		local rows: { any } = tern.json.array({})
+		for _, r in widgetMoneyRows do
+			rows[#rows + 1] = r
+		end
+		if gateAllowed(pid, "zai") then
+			for _, r in widgetZaiRows do
+				rows[#rows + 1] = r
+			end
+		end
+		if gateAllowed(pid, "opencode") then
+			for _, r in widgetOpenRows do
+				rows[#rows + 1] = r
+			end
+		end
+		if widgetPrayerRow then
+			rows[#rows + 1] = widgetPrayerRow
+		end
+		rows[#rows + 1] = {
+			id = "refresh",
+			text = "Force quota/deen/money polls",
+			tone = "muted",
+			actions = tern.json.array({ { id = "refresh", label = "Refresh" } }),
+		}
+		return {
+			text = if bar then bar.text else "no quota data",
+			tone = if bar then windows.heat(bar.value * 100, false) else "muted",
+			title = widgetDigest,
+			value = if bar then bar.value else nil,
+			card = rows,
+		}
+	end,
+})
+
+-- Refresh button on the widget's hover card (this half offers the widget, so
+-- widget_action lands here). Truthy return consumes the click.
+tern.on("widget_action", function(ev, _cx)
+	if type(ev) == "table" and ev.widget == "quota" and ev.act == "refresh" then
+		pcall(tern.kv.set, "asl/refresh-request", epochMs())
+		return true
+	end
+	return false
+end)
+
+-- ── palette commands ─────────────────────────────────────────────────────
+tern.command({
+	id = "expand",
+	title = "Status Panel",
+	keys = { "ctrl+shift+s" },
+	run = function(cx)
+		cx:new_block("plugin.agent-statusline.panel", {}, "over")
+	end,
+})
+
+tern.command({
+	id = "refresh",
+	title = "Refresh",
+	run = function(cx)
+		pcall(tern.kv.set, "asl/refresh-request", epochMs())
+		cx:toast("info", "Refresh requested")
+	end,
+})
+
+tern.command({
+	id = "set-keys",
+	title = "Set Keys",
+	run = function(cx)
+		cx:prompt({ placeholder = "z.ai API key" }):next(function(zaiKey, _err1, cx1)
+			if type(zaiKey) ~= "string" or zaiKey == "" then
+				cx1:toast("info", "Cancelled — z.ai key unchanged")
+				return
+			end
+			cx1:prompt({ placeholder = "OpenCode Go key (empty to skip)" }):next(function(ocKey, _err2, cx2)
+				local keys: any = {}
+				local okK, existing = pcall(tern.kv.get, "asl/keys")
+				if okK and type(existing) == "table" then
+					keys = existing
+				end
+				keys.zai = zaiKey
+				if type(ocKey) == "string" and ocKey ~= "" then
+					keys.opencode = ocKey
+				end
+				tern.kv.set("asl/keys", keys)
+				pcall(tern.kv.set, "asl/refresh-request", epochMs())
+				cx2:toast("success", "Keys stored — quota polls forced")
+			end)
+		end)
+	end,
+})
+
+tern.command({
+	id = "config",
+	title = "Config",
+	run = function(cx)
+		cx:prompt({ placeholder = "key (city, country, method, escalateMinutes, zaiPollMs, opencodePollMs)" }):next(function(key, _e1, cx1)
+			if type(key) ~= "string" or key == "" then
+				return
+			end
+			cx1:prompt({ placeholder = "value for " .. key }):next(function(value, _e2, cx2)
+				if type(value) ~= "string" or value == "" then
+					return
+				end
+				local cfg: any = {}
+				local okC, existing = pcall(tern.kv.get, "asl/config")
+				if okC and type(existing) == "table" then
+					cfg = existing
+				end
+				if key == "escalateMinutes" or key == "zaiPollMs" or key == "opencodePollMs" then
+					cfg[key] = tonumber(value)
+					if cfg[key] == nil then
+						cx2:toast("error", key .. " needs a number")
+						return
+					end
+				else
+					cfg[key] = value
+				end
+				tern.kv.set("asl/config", cfg)
+				pcall(tern.kv.set, "asl/refresh-request", epochMs())
+				cx2:toast("success", key .. " = " .. value)
+			end)
+		end)
+	end,
+})
+
+tern.command({
+	id = "debug",
+	title = "Debug",
+	run = function(cx)
+		local ok, snap = pcall(tern.kv.get, "asl/snapshot")
+		local agents: { any } = tern.json.array({})
+		local okA, list = pcall(function()
+			return cx.agents:list()
+		end)
+		if okA and type(list) == "table" then
+			for _, a in list do
+				if type(a) == "table" then
+					agents[#agents + 1] = { pane = a.pane, model = a.model, state = a.state }
+				end
+			end
+		end
+		local payload = tern.json.encode({
+			snapshot = if ok then snap else nil,
+			agents = agents,
+		}, true)
+		cx:copy(payload)
+		cx:toast("success", "Snapshot copied (" .. #payload .. " bytes)")
+	end,
+})
+
+-- ── watcher + gating timers (timer callbacks: roomy budgets) ────────────
+local function watcher(_cx: any?)
+	local ok, s = pcall(tern.kv.get, "asl/snapshot")
+	local changed = false
+	if ok and type(s) == "table" then
+		snapshot = s
+		rebuild()
+		if (s.seq or -1) ~= lastSeq or os.date("%a%H:%M", math.floor(epochMs() / 1000)) ~= lastMinuteKey then
+			lastSeq = s.seq or -1
+			changed = true
+		end
+	end
+	if changed then
+		tern.chrome.refresh()
+	end
+	tern.timer(5000, watcher)
+end
+
+local function gateTick(cx: any?)
+	if cx ~= nil then
+		gateFromAgents(cx)
+	end
+	tern.timer(60000, gateTick)
+end
+
+-- Re-gate on the events that change which agent is focused/relevant.
+tern.on("window_start", function(cx)
+	gateFromAgents(cx)
+	tern.chrome.refresh()
+end)
+tern.on("focus", function(_ev, cx)
+	gateFromAgents(cx)
+	tern.chrome.refresh()
+end)
+tern.on("agent_state", function(_ev, cx)
+	gateFromAgents(cx)
+	tern.chrome.refresh()
+end)
+
+-- Reload replaces the VM; timers die with it. Nothing to stop, nothing to
+-- save — pollers own no persistent children. Documented no-op by design.
+tern.on("unload", function(_cx) end)
+
+watcher(nil)
+gateTick(nil)

@@ -26,7 +26,10 @@ tern plugin install github.com/getpipher/agent-statusline
 
 Data is read-only side effects of your own machine and accounts:
 
-- **Money** — scanned from omp session JSONL (`~/.omp/agent/sessions`).
+- **Money** — scanned from omp session JSONL (`~/.omp/agent/sessions`). The
+  first pass after a Tern daemon restart runs chunked in the background and
+  can take several minutes on large session trees; quota and deen land within
+  seconds.
 - **Quota windows** — z.ai quota API and OpenCode Go usage API, polled on a
   3 min default cadence (fail-soft; last good values are kept).
 - **Deen** — prayer times + Hijri date from Aladhan for your city,

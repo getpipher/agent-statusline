@@ -6,3 +6,7 @@ description = "Clock, deen, money and quota statusline for Tern — successor to
 icon = "gauge"
 host = "host.luau"
 window = "window.luau"
+
+[[blocks]]
+id = "panel"
+title = "Status Panel"

@@ -54,6 +54,17 @@ function M.monthlyWindowMs(nextResetTime: number): number
 	return nextResetTime - M.previousMonthStartUtc(nextResetTime)
 end
 
+-- Window length for a stored quota window (label ↔ length, like the pollers:
+-- "5hrs" → 5h, "7DAY" → week, else the MONTH anniversary window).
+function M.lenFor(w: { label: string, resetMs: number }): number
+	if w.label == "5hrs" then
+		return FIVE_HOUR_MS
+	elseif w.label == "7DAY" then
+		return WEEK_MS
+	end
+	return M.monthlyWindowMs(w.resetMs)
+end
+
 -- Positive = burning faster than the clock (over), negative = under.
 function M.paceSeconds(windowMs: number, usagePct: number, elapsedPct: number): number
 	return windowMs * (usagePct - elapsedPct) / 100
