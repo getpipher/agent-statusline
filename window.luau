@@ -317,7 +317,13 @@ tern.command({
 	title = "Status Panel",
 	keys = { "ctrl+shift+s" },
 	run = function(cx)
-		cx:new_block("plugin.agent-statusline.panel", {}, "over")
+		-- Block kind is the bare "<plugin>.<block>" form (SDK examples:
+		-- longrun.slow, jsonx.explorer); the literal "plugin." prefix belongs to
+		-- command ACTIONS only (plugin.<id>.<cmd>). nil here means the host half
+		-- isn't loaded on this host (longrun's phrasing) — surface it.
+		if cx:new_block("agent-statusline.panel", {}, "over") == nil then
+			cx:toast("error", "Status Panel unavailable", "The agent-statusline host half isn't loaded on this host.")
+		end
 	end,
 })
 
