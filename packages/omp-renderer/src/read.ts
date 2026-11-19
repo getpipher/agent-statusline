@@ -31,8 +31,6 @@ export interface AslMoney {
   day?: AslMoneyWindow;
   d7?: AslMoneyWindow;
   d30?: AslMoneyWindow;
-  sub?: number;
-  entries?: number;
 }
 
 export interface AslProvider {
@@ -145,10 +143,8 @@ function money(v: unknown): AslMoney | undefined {
     day: moneyWindow(raw.day),
     d7: moneyWindow(raw.d7),
     d30: moneyWindow(raw.d30),
-    sub: num(raw.sub),
-    entries: num(raw.entries),
   };
-  return out.repo || out.day || out.d7 || out.d30 || out.sub !== undefined || out.entries !== undefined ? out : undefined;
+  return out.repo || out.day || out.d7 || out.d30 ? out : undefined;
 }
 
 export function snapshotPath(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, home: string = homedir()): string {

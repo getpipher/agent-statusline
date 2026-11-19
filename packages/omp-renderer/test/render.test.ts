@@ -50,14 +50,12 @@ const EXPECTED_FULL = [
   ` ${dim("󰥔")} ${[dim("Thu 10:00"), dim("1 Jumādá al-ūlá 1448 (19 Nov 2026)"), dim("Jakarta")].join(sep)}`,
   // 2 prayers — past dim ✓, next green countdown, upcoming text
   ` ${dim("󰣎")} ${[dim("Fajr 04:15 ✓"), dim("Dhuhr 11:51 ✓"), ok("Asr 15:07 (1h 20m)"), txt("Maghrib 17:52"), txt("Isha 19:01")].join(sep)}`,
-  // 3 money — REPO/DAY/7DAY/30DAY success-green + dim token parens + dim sub/entries tail
+  // 3 money — REPO/DAY/7DAY/30DAY success-green + dim token parens
   ` ${dim("󰄬")} ${[
     `${dim("REPO")} ${ok("$68.36")} ${dim("(1.3B)")}`,
     `${dim("DAY")} ${ok("$26.50")} ${dim("(4.0M)")}`,
     `${dim("7DAY")} ${ok("$315.27")} ${dim("(4.0B)")}`,
     `${dim("30DAY")} ${ok("$492.88")} ${dim("(11.3B)")}`,
-    dim("sub $11.02"),
-    dim("1234 entries"),
   ].join(sep)}`,
   // 4 zai windows — heat tone leading seg, pace token, dim countdown + absolute
   windowRow("zai", `${acc("5hrs 16%/26%")}${dim(" (")}${ok("30m under")}${dim(" · ")}${dim("3h 42m")}${dim(" · 13:42")}${dim(")")}`),
@@ -132,6 +130,8 @@ test("parseSnapshot: malformed members degrade to absent, never throw", () => {
   const noSeq = parseSnapshot(JSON.stringify({ "asl/snapshot": { updatedMs: 1 } }));
   assert.equal(noSeq, null);
   // nil money windows / prayer rows / malformed windows drop out gracefully.
+  // sub/entries ride along in the raw snapshot but are not AslMoney fields —
+  // unknown keys are ignored, never surfaced or fatal.
   const s = parseSnapshot(JSON.stringify({
     "asl/snapshot": {
       seq: 1,
@@ -144,7 +144,6 @@ test("parseSnapshot: malformed members degrade to absent, never throw", () => {
   assert.ok(s);
   assert.equal(s.money?.repo, undefined);
   assert.deepEqual(s.money?.day, { usd: 2 });
-  assert.equal(s.money?.entries, undefined);
   assert.equal(s.zai?.windows.length, 1);
   assert.deepEqual(s.deen?.prayers, [{ name: "Fajr", time: "04:15", past: false }]);
   assert.equal(s.deen?.city, undefined);

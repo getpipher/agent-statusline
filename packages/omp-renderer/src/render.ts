@@ -6,7 +6,7 @@
 // Six rows, in order, each omitted when its data is absent — never placeholders:
 //   1 info     󰥔 Thu 10:00 · 1 Jumādá al-ūlá 1448 (19 Nov 2026) · Jakarta [· stale Xm]
 //   2 prayers  󰣎 Fajr 04:15 ✓ · … · Asr 15:07 (1h 20m) …   next green; escalateMinutes band → warning
-//   3 money    󰄬 REPO $68.36 (1.3B) · DAY $26.50 (4.0M) · 7DAY · 30DAY [· sub $… · N entries]
+//   3 money    󰄬 REPO $68.36 (1.3B) · DAY $26.50 (4.0M) · 7DAY · 30DAY
 //   4 zai      󰚯 zai 5hrs 16%/26% (30m under · 3h 42m · 13:42)      provider-gated
 //   5 opencode 󰚯 opencode 5hrs/7DAY/MONTH …                        provider-gated
 //   6 versions 󰚦 omp 18.22.1 · asl 0.1.0 · tern 0.9.28             omitted when all unknown
@@ -143,9 +143,6 @@ export function moneyLine(theme: SlTheme, m: AslMoney, sep: string, accent: Acce
     return `${glyph(label)} ${theme.fg("success", `$${w.usd.toFixed(2)}`)}${parens}`;
   };
   const parts = [seg("REPO", m.repo), seg("DAY", m.day), seg("7DAY", m.d7), seg("30DAY", m.d30)].filter((s) => s !== null);
-  // Dim sub/entries tail (omp's /sl money digest, demoted to a row tail).
-  if (m.sub !== undefined) parts.push(theme.fg("dim", `sub $${m.sub.toFixed(2)}`));
-  if (m.entries !== undefined) parts.push(theme.fg("dim", `${m.entries} entries`));
   if (parts.length === 0) return null;
   return ` ${glyph("󰄬")} ${parts.join(sep)}`;
 }
