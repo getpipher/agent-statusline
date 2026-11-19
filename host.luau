@@ -44,10 +44,35 @@ local function mergeProvider(name: string, patch: any, err: string?)
 	publish()
 end
 
+-- Reload/restart bridge (issue #1): the money scanner's first pass takes
+-- minutes on large session trees; carry the persisted aggregate forward so
+-- money pills/cards survive the gap. Age-guarded — stale totals are dropped
+-- rather than shown as truth. The first completed pass overwrites the seed.
+local MONEY_SEED_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
+local function seedMoney(): any
+	local ok, prev = pcall(tern.kv.get, "asl/snapshot")
+	if not ok or type(prev) ~= "table" or type(prev.money) ~= "table" then
+		return nil
+	end
+	local m = prev.money
+	for _, key in { "repo", "day", "d7", "d30" } do
+		local w = m[key]
+		if w ~= nil and (type(w) ~= "table" or type(w.usd) ~= "number") then
+			return nil -- malformed persisted shape; don't trust it
+		end
+	end
+	local updated = prev.updatedMs
+	if type(updated) ~= "number" or epochMs() - updated > MONEY_SEED_MAX_AGE_MS then
+		return nil
+	end
+	return m
+end
+
 snapshot = {
 	seq = 0,
 	updatedMs = epochMs(),
-	money = nil, -- arrives with the first completed scan pass
+	money = seedMoney(), -- last-good bridge; the first scan pass overwrites it
 	zai = nil,
 	opencode = nil,
 	deen = nil,
@@ -91,7 +116,7 @@ refreshLoop()
 -- ── panel block (plugin.agent-statusline.panel) ─────────────────────────
 -- Freshness = at render (open/focus): view reads tern.kv fresh every call.
 -- The compact surfaces (segments + widget) are the live ones.
-local PLUGIN_VERSION = "0.2.0" -- keep in sync with plugin.toml
+local PLUGIN_VERSION = "0.2.1" -- keep in sync with plugin.toml
 local ternVersion: string? = nil
 
 -- Probe the tern version once for the footer; omit the segment when the
