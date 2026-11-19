@@ -55,6 +55,8 @@ export interface AslDeen {
   gregorian?: string;
   prayers: AslPrayer[];
   nextPrayer?: AslNextPrayer;
+  /** When nextPrayer.inSec was computed; countdowns subtract elapsed time since. */
+  computedAtMs?: number;
 }
 
 export interface AslSnapshot {
@@ -131,6 +133,7 @@ function deen(v: unknown): AslDeen | undefined {
     gregorian: str(raw.gregorian),
     prayers,
     nextPrayer,
+    computedAtMs: num(raw.computedAtMs),
   };
 }
 

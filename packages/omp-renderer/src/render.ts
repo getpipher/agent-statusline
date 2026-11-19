@@ -113,15 +113,28 @@ export function infoLine(theme: SlTheme, snap: AslSnapshot, sep: string, accent:
 // the Tern plugin's asl/config default; the snapshot carries no config).
 const DEFAULT_ESCALATE_MINUTES = 30;
 
-export function prayerLine(theme: SlTheme, deen: AslDeen, sep: string, accent: AccentFn | null, escalateMinutes: number = DEFAULT_ESCALATE_MINUTES): string {
+export function prayerLine(
+  theme: SlTheme,
+  deen: AslDeen,
+  sep: string,
+  accent: AccentFn | null,
+  escalateMinutes: number = DEFAULT_ESCALATE_MINUTES,
+  now: number = Date.now(),
+  updatedMs: number = now,
+): string {
   // Option A: accent on the 󰣎 glyph only — prayer names keep their state tokens
   // (past dim ✓, next success/warning, upcoming text).
   const glyph = accent ?? ((t: string) => theme.fg("dim", t));
+  // inSec was computed when the deen snapshot was taken (computedAtMs; the whole-snapshot
+  // updatedMs is the fallback for older snapshots). Subtract the elapsed wall time or the
+  // countdown freezes between deen fetches (seen live: 24m shown when 11m remained).
+  const base = deen.computedAtMs ?? updatedMs;
+  const elapsedSec = Math.max(0, now - base) / 1000;
   const cells = deen.prayers.map((p) => {
     if (deen.nextPrayer && p.name === deen.nextPrayer.name) {
       // Next wins over `past` (post-Isha the next prayer is tomorrow's Fajr,
       // which still carries past=true in the snapshot).
-      const m = Math.max(0, Math.floor(deen.nextPrayer.inSec / 60));
+      const m = Math.max(0, Math.floor((deen.nextPrayer.inSec - elapsedSec) / 60));
       const cd = m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
       const token = m <= escalateMinutes ? "warning" : "success";
       return theme.fg(token, `${p.name} ${p.time} (${cd})`);
@@ -183,7 +196,7 @@ export function renderRows(snap: AslSnapshot, env: RenderEnv): string[] {
   const accent = env.accent ?? null;
   const lines: string[] = [];
   lines.push(infoLine(theme, snap, sep, accent, now));
-  if (snap.deen?.prayers.length) lines.push(prayerLine(theme, snap.deen, sep, accent, env.escalateMinutes));
+  if (snap.deen?.prayers.length) lines.push(prayerLine(theme, snap.deen, sep, accent, env.escalateMinutes, now, snap.updatedMs));
   if (snap.money) {
     const money = moneyLine(theme, snap.money, sep, accent);
     if (money) lines.push(money);

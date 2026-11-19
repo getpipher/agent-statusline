@@ -37,7 +37,8 @@
         { "name": "Maghrib", "time": "17:52", "past": false },
         { "name": "Isha", "time": "19:01", "past": false }
       ],
-      "nextPrayer": { "name": "Asr", "inSec": 4800 }
+      "nextPrayer": { "name": "Asr", "inSec": 18540 },
+      "computedAtMs": 1795057080000
     },
     "errors": { "zai": null, "opencode": null, "deen": null, "money": null }
   }

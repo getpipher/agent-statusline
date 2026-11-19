@@ -49,7 +49,7 @@ const EXPECTED_FULL = [
   // 1 info
   ` ${dim("󰥔")} ${[dim("Thu 10:00"), dim("1 Jumādá al-ūlá 1448 (19 Nov 2026)"), dim("Jakarta")].join(sep)}`,
   // 2 prayers — past dim ✓, next green countdown, upcoming text
-  ` ${dim("󰣎")} ${[dim("Fajr 04:15 ✓"), dim("Dhuhr 11:51 ✓"), ok("Asr 15:07 (1h 20m)"), txt("Maghrib 17:52"), txt("Isha 19:01")].join(sep)}`,
+  ` ${dim("󰣎")} ${[dim("Fajr 04:15 ✓"), dim("Dhuhr 11:51 ✓"), ok("Asr 15:07 (5h 07m)"), txt("Maghrib 17:52"), txt("Isha 19:01")].join(sep)}`,
   // 3 money — REPO/DAY/7DAY/30DAY success-green + dim token parens
   ` ${dim("󰄬")} ${[
     `${dim("REPO")} ${ok("$68.36")} ${dim("(1.3B)")}`,
@@ -80,10 +80,11 @@ test("stale snapshot → dim `· stale Xm` chip appended to the info row only", 
   // Same rows, later clock: updatedMs is 09:58:00, +7m30s → the info row re-renders at 10:05.
   const fresh = ` ${dim("󰥔")} ${[dim("Thu 10:05"), dim("1 Jumādá al-ūlá 1448 (19 Nov 2026)"), dim("Jakarta")].join(sep)}`;
   assert.equal(lines[0], `${fresh}${sep}${dim("stale 7m")}`);
-  // now-independent rows (prayers, money, versions) are byte-identical to the
-  // fresh render; window rows keep grammar with moved countdowns — and no
-  // stale chip leaks onto any row but info.
-  assert.equal(lines[1], EXPECTED_FULL[1]);
+  // now-dependent rows: the prayers countdown subtracts elapsed since computedAtMs
+  // (09:58:00) — at 10:05:30 the Asr countdown shrank from 5h 07m to 5h 01m; money and
+  // versions are byte-identical to the fresh render; window rows keep grammar with moved
+  // countdowns — and no stale chip leaks onto any row but info.
+  assert.match(lines[1], /Asr 15:07 \(5h 01m\)/);
   assert.equal(lines[2], EXPECTED_FULL[2]);
   assert.equal(lines[lines.length - 1], EXPECTED_FULL[EXPECTED_FULL.length - 1]);
   assert.match(lines[3], /30m under.*3h 36m/); // 13:42 from 10:05:30
@@ -93,6 +94,15 @@ test("stale snapshot → dim `· stale Xm` chip appended to the info row only", 
   assert.match(atThreshold[0], /Thu 10:03/);
   assert.doesNotMatch(atThreshold[0], /stale/);
   assert.match(renderRows(snap, { theme, now: snap.updatedMs + 300_001 })[0], /stale 5m/);
+});
+
+test("prayer countdown subtracts elapsed since computedAtMs and crosses the escalate band", () => {
+  // computedAtMs is 09:58:00; at 14:43 (4h 45m later) the raw inSec (18540 s) has 17100 s
+  // elapsed → 24 min remain, inside the 30-minute escalation band → warning.
+  const now = 1795057080000 + 4 * 3600_000 + 45 * 60_000;
+  const lines = renderRows(snap, { theme, now, stamp: { omp: "18.22.1", asl: "0.1.2", tern: "0.9.28" } });
+  assert.match(lines[1], /Asr 15:07 \(24m\)/);
+  assert.equal(lines[1], ` ${dim("󰣎")} ${[dim("Fajr 04:15 ✓"), dim("Dhuhr 11:51 ✓"), warn("Asr 15:07 (24m)"), txt("Maghrib 17:52"), txt("Isha 19:01")].join(sep)}`);
 });
 
 test("absent file → reader returns null → zero rows; parse failures keep last-good", () => {
@@ -182,10 +192,11 @@ test("escalation band: next prayer inside escalateMinutes tints warning", () => 
     deen: { ...snap.deen!, nextPrayer: { name: "Asr", inSec: 900 } },
   };
   const lines = renderRows(soon, { theme, now: NOW });
-  assert.equal(lines[1], ` ${dim("󰣎")} ${[dim("Fajr 04:15 ✓"), dim("Dhuhr 11:51 ✓"), warn("Asr 15:07 (15m)"), txt("Maghrib 17:52"), txt("Isha 19:01")].join(sep)}`);
-  // Out of the band → success (covered by the full case at 1h 20m); custom band width honored.
+  // inSec 900 computed at computedAtMs (09:58:00) → at NOW (10:00:00) 120 s elapsed → 13m left.
+  assert.equal(lines[1], ` ${dim("󰣎")} ${[dim("Fajr 04:15 ✓"), dim("Dhuhr 11:51 ✓"), warn("Asr 15:07 (13m)"), txt("Maghrib 17:52"), txt("Isha 19:01")].join(sep)}`);
+  // Out of the band → success (covered by the full case at 5h 07m); custom band width honored.
   const wide = renderRows(soon, { theme, now: NOW, escalateMinutes: 10 });
-  assert.match(wide[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(15m\)/);
+  assert.match(wide[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(13m\)/);
 });
 
 test("accent wraps glyphs + labels only; values keep semantic tokens", () => {

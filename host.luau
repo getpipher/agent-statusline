@@ -116,7 +116,7 @@ refreshLoop()
 -- ── panel block (plugin.agent-statusline.panel) ─────────────────────────
 -- Freshness = at render (open/focus): view reads tern.kv fresh every call.
 -- The compact surfaces (segments + widget) are the live ones.
-local PLUGIN_VERSION = "0.2.1" -- keep in sync with plugin.toml
+local PLUGIN_VERSION = "0.2.2" -- keep in sync with plugin.toml
 local ternVersion: string? = nil
 
 -- Probe the tern version once for the footer; omit the segment when the

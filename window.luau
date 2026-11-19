@@ -236,7 +236,7 @@ local function rebuild()
 				end
 			end
 		end
-		local remainingSec = math.max(0, (np.inSec or 0) - math.floor((now - (snapshot.updatedMs or now)) / 1000))
+		local remainingSec = math.max(0, (np.inSec or 0) - math.floor((now - (d.computedAtMs or snapshot.updatedMs or now)) / 1000))
 		segPrayer = {
 			icon = "clock",
 			text = np.name

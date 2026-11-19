@@ -1,6 +1,6 @@
 {
   "name": "@getpipher/agent-statusline",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "omp in-pane renderer of the agent-statusline Tern plugin snapshot: the classic six-row block (hijri clock, prayers, money ledger, per-window quota rows, versions) below the composer.",
   "keywords": [
     "pi-extension",

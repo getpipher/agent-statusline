@@ -435,6 +435,7 @@ local function buildPatch(data: any, city: string, hijri: string, now: number): 
 		gregorian = format.formatGregorian(now),
 		prayers = prayers,
 		nextPrayer = nextPrayer,
+		computedAtMs = now, -- inSec was computed against this instant; consumers subtract elapsed wall time
 	}
 end
 
