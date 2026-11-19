@@ -52,6 +52,15 @@ local CHUNK_WALL_MS = 1200 -- per-chunk wall cap
 -- (20 files/s) while each 1.2 s of Lua absorbs hundreds of small JSONL files.
 local CHUNK_FILES = 600 -- per-chunk file-parse cap
 local CHUNK_LISTS = 600 -- per-chunk directory listing/probe cap (wall cap governs too)
+-- tern.fs.read max_bytes: the host Luau VM caps each VM at 256 MiB and this
+-- tree OOMed it — both on the largest file (91 MB JSONL) and cumulatively
+-- during the walk (tern.runtime docs: "Each VM may allocate at most 256 MiB";
+-- `collectgarbage` forces other than "count" are removed, so GC cannot be
+-- forced from Lua). Oversize/failed reads skip like any unreadable file
+-- (money.ts readFileSync catch). Live impact at 16 MiB: 9 of 37.8k files
+-- skipped, all long-retired sessions — rolling windows stay exact; only
+-- all-time REPO for those repos is understated.
+local MAX_FILE_BYTES = 16 * 1024 * 1024
 
 -- Directory-mode transitions mirror money.ts's three fixed levels: sessions tree holds
 -- <repoSlug>/<ts-id>.jsonl (main), <repoSlug>/<session-dir>/*.jsonl (subagent <Agent>.jsonl and
@@ -61,8 +70,6 @@ local CHILD_MODE = { root = "repo", repo = "session", session = "agent" }
 -- money.ts: main session files scan with sub=false; every artifact file (subagent or advisor)
 -- scans with sub=true; stray files at the root level are skipped (readdirSync on them throws).
 local FILE_SUB = { repo = false, session = true, agent = true }
-
-local EMPTY = {}
 
 local seen = {} -- entry-id → true; fresh per pass (money.ts: fresh Set per scanMoney call)
 local onPart = nil -- (patch, nil) | (nil, reason); set by M.start
@@ -296,8 +303,36 @@ local function parseLine(line: string, f)
 	f.tok += tok
 	f.entries += 1
 	f.lastSeenMs = wallMs()
-	local entries = pass.entries
-	entries[#entries + 1] = { ts = ts, cost = total, repo = f.repo, sub = f.sub, tok = tok }
+	-- Streaming window aggregation (pass-boundary windows, computed once in
+	-- startPass): no per-entry table — 300k entries exceeded the 256 MiB VM cap
+	-- under GC pressure. Totals are order- and window-identical to money.ts's
+	-- post-scan fold (window membership of an entry is independent of scan end).
+	local a = pass.agg
+	a.entries += 1
+	a.repoUsd += total
+	a.repoTok += tok
+	local r = a.byRepo[f.repo]
+	if r == nil then
+		r = { usd = 0, tok = 0 }
+		a.byRepo[f.repo] = r
+	end
+	r.usd += total
+	r.tok += tok
+	if ts >= pass.midnightMs then
+		a.dayUsd += total
+		a.dayTok += tok
+	end
+	if ts >= pass.weekStart then
+		a.weekUsd += total
+		a.weekTok += tok
+	end
+	if ts >= pass.monthStart then
+		a.monthUsd += total
+		a.monthTok += tok
+		if f.sub then
+			a.subUsd += total
+		end
+	end
 end
 
 -- Parse a file's lines up to the wall cap, then record it and advance the file cursor.
@@ -319,11 +354,15 @@ local function parseLines(f, t0: number)
 			f.pos = nl + 1
 		end
 		if line ~= "" then
-			parseLine(line, f)
+			-- A line whose decode spikes past the 256 MiB VM cap must not reset the
+			-- whole pass (pos already advanced): pcall drops it like money.ts drops
+			-- unparseable lines.
+			pcall(parseLine, line, f)
 		end
 	end
 	-- File fully scanned → per-file record for kv asl/scan (bytes because tern.fs has no stat).
 	pass.scan[f.path] = { bytes = f.bytes, cost = f.cost, tokens = f.tok, entries = f.entries, lastSeenMs = wallMs() }
+	f.content = nil -- release the raw text: retaining every file until pass end OOMs the host VM on large trees
 	pass.fi += 1
 end
 
@@ -336,8 +375,19 @@ local function visit(t, name: string)
 	if ok and type(inner) == "table" then
 		local childMode = CHILD_MODE[t.mode]
 		if childMode ~= nil then
-			pass.dirs[#pass.dirs + 1] = { path = childPath, mode = childMode, names = inner, ni = 1 }
+			-- DFS: children wait on the stack (lazy-listed on pop). The previous
+			-- insert-at-cursor scheme drifted with the driver index and
+			-- re-enqueued dirs ~4x (16,280 enqueues for a 4,133-dir tree); a
+			-- stack structurally cannot revisit. Live set stays O(path depth).
+			pass.stack[#pass.stack + 1] = { path = childPath, mode = childMode, names = nil, ni = 1 }
 		end
+		return
+	end
+	if type(inner) == "string" and string.find(inner, "enough memory", 1, true) ~= nil then
+		-- Allocation failed inside fs.list: NOT a file. Misclassifying it as one
+		-- would silently drain the walk to a zero pass (seen live). Pause the
+		-- chunk; the idle gap lets GC settle and the next chunk retries.
+		pass.oom = true
 		return
 	end
 	if not endsWith(name, ".jsonl") then
@@ -373,60 +423,56 @@ local function startPass()
 	if home == nil or home == "" then
 		error("no HOME environment variable for the sessions scan")
 	end
+	-- Window boundaries frozen at pass start (money.ts computes them at scan
+	-- end; the pass-duration delta is minutes on window edges — immaterial).
+	local startMs = wallMs()
+	local sd = os.date("*t", math.floor(startMs / 1000))
+	local midnightMs = os.time({ year = sd.year, month = sd.month, day = sd.day, hour = 0, min = 0, sec = 0 }) * 1000
+	local hourFloor = startMs - (startMs % HOUR_MS)
 	pass = {
-		dirs = { { path = home .. "/.omp/agent/sessions", mode = "root", names = nil, ni = 1 } },
-		di = 1,
+		stack = { { path = home .. "/.omp/agent/sessions", mode = "root", names = nil, ni = 1 } },
 		files = {},
 		fi = 1,
-		entries = {},
 		scan = {},
+		midnightMs = midnightMs,
+		weekStart = hourFloor - 7 * DAY_MS,
+		monthStart = hourFloor - 30 * DAY_MS,
+		agg = {
+			repoUsd = 0,
+			repoTok = 0,
+			byRepo = {},
+			entries = 0,
+			dayUsd = 0,
+			dayTok = 0,
+			weekUsd = 0,
+			weekTok = 0,
+			monthUsd = 0,
+			monthTok = 0,
+			subUsd = 0,
+		},
 	}
 end
 
 local function completePass()
-	local nowMs = wallMs()
-	-- Local midnight, setHours(0,0,0,0) equivalent; hour-aligned rolling week/month per money.ts.
-	local d = os.date("*t", math.floor(nowMs / 1000))
-	local midnightMs = os.time({ year = d.year, month = d.month, day = d.day, hour = 0, min = 0, sec = 0 }) * 1000
-	local hourFloor = nowMs - (nowMs % HOUR_MS)
-	local windowStart = hourFloor - 30 * DAY_MS -- widest window; sub share reported over it
 	local repoName = resolveRepoName()
-	local repo, day, week, month, sub = 0, 0, 0, 0, 0
-	local repoTok, dayTok, weekTok, monthTok = 0, 0, 0, 0
-	local entries = pass.entries
-	for i = 1, #entries do
-		local e = entries[i]
-		-- Assignment override of money.ts: nil repoName (no pane cwd) → repo carries all-time.
-		if repoName == nil or e.repo == repoName then
-			repo += e.cost
-			repoTok += e.tok
-		end
-		if e.ts >= midnightMs then
-			day += e.cost
-			dayTok += e.tok
-		end
-		if e.ts >= hourFloor - 7 * DAY_MS then
-			week += e.cost
-			weekTok += e.tok
-		end
-		if e.ts >= windowStart then
-			month += e.cost
-			monthTok += e.tok
-			if e.sub then
-				sub += e.cost
-			end
-		end
+	local a = pass.agg
+	-- Assignment override of money.ts: nil repoName (no pane cwd) → repo carries all-time.
+	local repoUsd, repoTok = a.repoUsd, a.repoTok
+	if repoName ~= nil then
+		local r = a.byRepo[repoName]
+		repoUsd = if r then r.usd else 0
+		repoTok = if r then r.tok else 0
 	end
 	pcall(tern.kv.set, "asl/scan", pass.scan)
 	if onPart ~= nil then
 		pcall(onPart, {
-			repo = { usd = repo, tokens = repoTok },
+			repo = { usd = repoUsd, tokens = repoTok },
 			repoName = repoName,
-			day = { usd = day, tokens = dayTok },
-			d7 = { usd = week, tokens = weekTok },
-			d30 = { usd = month, tokens = monthTok },
-			sub = sub,
-			entries = #entries,
+			day = { usd = a.dayUsd, tokens = a.dayTok },
+			d7 = { usd = a.weekUsd, tokens = a.weekTok },
+			d30 = { usd = a.monthUsd, tokens = a.monthTok },
+			sub = a.subUsd,
+			entries = a.entries,
 		}, nil)
 	end
 	pass = nil
@@ -438,14 +484,15 @@ local function runChunk()
 	if pass == nil then
 		startPass()
 	end
+	pass.oom = false -- each chunk gets one retry budget; the walk pauses where memory ran out
 	local t0 = tern.now()
 	local filesStarted = 0
 	local lists = 0
 	while true do
-		if tern.now() - t0 >= CHUNK_WALL_MS then
+		if pass.oom or tern.now() - t0 >= CHUNK_WALL_MS then
 			return
 		end
-		local t = pass.dirs[pass.di]
+		local t = pass.stack[#pass.stack]
 		if t ~= nil then
 			if t.names == nil then
 				if lists >= CHUNK_LISTS then
@@ -453,25 +500,29 @@ local function runChunk()
 				end
 				lists += 1
 				local ok, res = pcall(tern.fs.list, t.path)
-				t.names = (ok and type(res) == "table") and res or EMPTY -- failed listing (missing root, file slug): skipped
-				t.ni = 1
+				if ok and type(res) == "table" then
+					t.names = res
+					t.ni = 1
+				else
+					if type(res) == "string" and string.find(res, "enough memory", 1, true) ~= nil then
+						pass.oom = true -- allocation failure inside the listing: retry this dir next chunk
+						return
+					end
+					table.remove(pass.stack) -- failed listing (missing root, transient): skipped
+				end
 			else
 				local name = t.names[t.ni]
 				if name == nil then
-					pass.di += 1 -- directory done
+					table.remove(pass.stack) -- directory done
 				else
 					t.ni += 1
-					if lists >= CHUNK_LISTS then
-						return
-					end
-					lists += 1
-					visit(t, name)
+					visit(t, name) -- child dirs push onto the stack: depth-first, exactly once
 				end
 			end
 		else
 			local f = pass.files[pass.fi]
 			if f == nil then
-				if pass.dirs[pass.di] == nil then
+				if #pass.stack == 0 then
 					completePass()
 				end
 				return
@@ -481,8 +532,12 @@ local function runChunk()
 					return
 				end
 				filesStarted += 1
-				local ok, raw = pcall(tern.fs.read, f.path)
+				local ok, raw = pcall(tern.fs.read, f.path, MAX_FILE_BYTES)
 				if not ok or type(raw) ~= "string" then
+					if type(raw) == "string" and string.find(raw, "enough memory", 1, true) ~= nil then
+						pass.oom = true -- allocation failure: retry this file next chunk
+						return
+					end
 					pass.fi += 1 -- money.ts readFileSync catch → skip silently
 				else
 					f.content = raw
