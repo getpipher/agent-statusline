@@ -1,0 +1,35 @@
+{
+  "name": "@getpipher/agent-statusline",
+  "version": "0.1.0",
+  "description": "omp in-pane renderer of the agent-statusline Tern plugin snapshot: the classic six-row block (hijri clock, prayers, money ledger, per-window quota rows, versions) below the composer.",
+  "keywords": [
+    "pi-extension",
+    "omp",
+    "statusline"
+  ],
+  "license": "MIT",
+  "author": "RECTOR <rector@rectorspace.com>",
+  "homepage": "https://github.com/getpipher/agent-statusline",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test:run": "node --test --test-reporter=spec test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3"
+  }
+}

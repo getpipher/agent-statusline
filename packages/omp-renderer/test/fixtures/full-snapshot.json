@@ -1,0 +1,44 @@
+{
+  "asl/snapshot": {
+    "seq": 42,
+    "updatedMs": 1795057080000,
+    "money": {
+      "repo": { "usd": 68.36, "tokens": 1300000000 },
+      "repoName": "agent-statusline",
+      "day": { "usd": 26.5, "tokens": 4000000 },
+      "d7": { "usd": 315.27, "tokens": 4000000000 },
+      "d30": { "usd": 492.88, "tokens": 11300000000 },
+      "sub": 11.02,
+      "entries": 1234
+    },
+    "zai": {
+      "fetchedMs": 1795056860000,
+      "windows": [
+        { "label": "5hrs", "usagePct": 16, "elapsedPct": 26, "paceOverSec": -1800, "resetMs": 1795070520000 },
+        { "label": "7DAY", "usagePct": 33, "elapsedPct": 31, "paceOverSec": 12100, "resetMs": 1795471200000 }
+      ]
+    },
+    "opencode": {
+      "fetchedMs": 1795056860000,
+      "windows": [
+        { "label": "5hrs", "usagePct": 8, "elapsedPct": 12, "paceOverSec": -720, "resetMs": 1795065840000 },
+        { "label": "7DAY", "usagePct": 21, "elapsedPct": 19, "paceOverSec": 3600, "resetMs": 1795748400000 },
+        { "label": "MONTH", "usagePct": 74, "elapsedPct": 60, "paceOverSec": 250000, "resetMs": 1796180400000 }
+      ]
+    },
+    "deen": {
+      "city": "Jakarta",
+      "hijri": "1 Jumādá al-ūlá 1448",
+      "gregorian": "19 Nov 2026",
+      "prayers": [
+        { "name": "Fajr", "time": "04:15", "past": true },
+        { "name": "Dhuhr", "time": "11:51", "past": true },
+        { "name": "Asr", "time": "15:07", "past": false },
+        { "name": "Maghrib", "time": "17:52", "past": false },
+        { "name": "Isha", "time": "19:01", "past": false }
+      ],
+      "nextPrayer": { "name": "Asr", "inSec": 4800 }
+    },
+    "errors": { "zai": null, "opencode": null, "deen": null, "money": null }
+  }
+}
