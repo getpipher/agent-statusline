@@ -145,7 +145,8 @@ local function barFrom(data: any): any?
 end
 
 -- One status slot per money window that has data — REPO/DAY/7DAY/30DAY
--- rotate individually, tokens paren'd like the omp renderer's row.
+-- rotate individually. Widget-bar pills ellipsize past ~21 chars, so tokens
+-- render bare (no parens) and labels stay full.
 local function moneySlots(m: any): { any }
 	local slots: { any } = tern.json.array({})
 	if type(m) ~= "table" then
@@ -159,7 +160,7 @@ local function moneySlots(m: any): { any }
 	}
 	for _, r in spec do
 		if type(r.w) == "table" and type(r.w.usd) == "number" then
-			local tokens = if type(r.w.tokens) == "number" then " (" .. format.fmtTokens(r.w.tokens) .. ")" else ""
+			local tokens = if type(r.w.tokens) == "number" then " " .. format.fmtTokens(r.w.tokens) else ""
 			slots[#slots + 1] = {
 				icon = "stack",
 				text = r.lbl .. " " .. fmtMoney(r.w.usd) .. tokens,
@@ -171,8 +172,29 @@ local function moneySlots(m: any): { any }
 	return slots
 end
 
+-- `3h 22m over` → `3h over`; `30m under` stays one unit; `0m under` (on
+-- pace) → "". Keeps quota pills inside the ~21-char ellipsis cap. Lua
+-- patterns have no alternation, so the direction word is matched separately.
+local function compactPace(pace: string): string
+	local dir = pace:match(" (under)$") or pace:match(" (over)$")
+	local major = if dir ~= nil then pace:match("^(%S+) %S+ ") else nil
+	if dir ~= nil and major ~= nil then
+		return major .. " " .. dir
+	end
+	if pace:match("^0m ") then
+		return ""
+	end
+	return pace
+end
+
+-- `3h 42m` → `3h`; `13m` stays. One duration unit keeps prayer pills ≤ cap.
+local function compactDur(dur: string): string
+	return (dur:match("^%S+")) or dur
+end
+
 -- One status slot per quota window of a provider — 5hrs/7DAY(/MONTH) rotate
--- individually with their own pace + heat tone.
+-- individually with their own pace + heat tone. Space separator (not ` · `)
+-- and the `oc` provider alias keep the longest pill at the 21-char cap.
 local function quotaSlots(providerLabel: string, data: any): { any }
 	local slots: { any } = tern.json.array({})
 	if type(data) ~= "table" or type(data.windows) ~= "table" then
@@ -181,11 +203,11 @@ local function quotaSlots(providerLabel: string, data: any): { any }
 	for _, w in data.windows do
 		if type(w) == "table" and type(w.usagePct) == "number" then
 			local len = windowLen(w)
-			local pace = windows.paceText(len, w.usagePct, w.elapsedPct or 0)
+			local pace = compactPace(windows.paceText(len, w.usagePct, w.elapsedPct or 0))
 			slots[#slots + 1] = {
 				icon = "gauge",
 				text = providerLabel .. " " .. w.label .. " " .. math.floor(w.usagePct + 0.5) .. "%"
-					.. (if pace ~= "" then " · " .. pace else ""),
+					.. (if pace ~= "" then " " .. pace else ""),
 				tone = windows.heat(w.usagePct, (w.paceOverSec or 0) > 0),
 				command = EXPAND,
 			}
@@ -220,7 +242,7 @@ local function rebuild()
 			text = np.name
 				.. (if timeStr ~= "" then " " .. timeStr else "")
 				.. " ("
-				.. format.formatReset(now + remainingSec * 1000, now)
+				.. compactDur(format.formatReset(now + remainingSec * 1000, now))
 				.. ")",
 			tone = "ok",
 			command = EXPAND,
@@ -238,7 +260,7 @@ local function rebuild()
 	widgetMoneyRows = moneyRowsFrom(m)
 
 	segZaiSlots = quotaSlots("zai", snapshot.zai)
-	segOpenSlots = quotaSlots("opencode", snapshot.opencode)
+	segOpenSlots = quotaSlots("oc", snapshot.opencode)
 	widgetZaiRows = windowRowsFrom("zai", snapshot.zai, now)
 	widgetOpenRows = windowRowsFrom("opencode", snapshot.opencode, now)
 	widgetZaiBar = barFrom(snapshot.zai)
