@@ -5,7 +5,8 @@ name: Release
 # scoped to @getpipher, with "Bypass 2FA" — no OTP needed). Inherited by all
 # getpipher repos.  gh secret set NPM_TOKEN --org getpipher
 #
-# Idempotent: skips if the version is already on npm (safe to re-run).
+# Idempotent: skips if the version is already on npm (safe to re-run, even
+# while npm is still staging the earlier publish — issue #6).
 # No build step — extensions ship raw .ts, loaded by omp/pi directly.
 
 on:
@@ -59,7 +60,21 @@ jobs:
         working-directory: packages/omp-renderer
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        # npm staging lag (issue #6): a version accepted seconds ago is invisible to the
+        # `npm view` skip check above until npm serves it, so a re-run re-publishes and
+        # dies with E409 "Cannot publish over previously staged version". That is the
+        # skip case in disguise — notice and exit 0; every other failure still fails.
+        run: |
+          set -u
+          if ! out=$(npm publish --access public 2>&1); then
+            if printf '%s' "$out" | grep -q "Cannot publish over previously staged version"; then
+              echo "::notice::version staged on npm (earlier publish still processing) — skipping"
+              exit 0
+            fi
+            printf '%s\n' "$out"
+            exit 1
+          fi
+          printf '%s\n' "$out"
 
       # Keep GitHub Releases in sync with npm: create a release for the tag
       # (auto-generated notes). Idempotent — skips if the release already exists.
