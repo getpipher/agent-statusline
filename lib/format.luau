@@ -98,4 +98,13 @@ function M.formatWeekday(ts: number): string
 	return WEEKDAYS[d.wday]
 end
 
+-- Last non-empty "/" segment, money.ts's cwd.split("/").filter(Boolean).pop(); nil for roots.
+function M.lastSegment(p: string): string?
+	local last = nil
+	for seg in string.gmatch(p, "[^/]+") do
+		last = seg
+	end
+	return last
+end
+
 return M

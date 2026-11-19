@@ -5,7 +5,8 @@
 -- no agents:list inside a formatter. A 5 s tern.timer watches tern.kv
 -- "asl/snapshot".seq, refreshes chrome on every tick, and rotates the status
 -- bar one notch per tick (5 s cadence) through prayer · every money window
--- (REPO/DAY/7DAY/30DAY) · every quota window of the pane's providers.
+-- (REPO pane-scoped to the focused pane's cwd; DAY/7DAY/30DAY global) ·
+-- every quota window of the pane's providers.
 -- Provider gating via cx.agents:list() runs ONLY in timer/event callbacks
 -- (60 s tick + focus/agent_state/window_start); the gate maps
 -- AgentBlock.model per pane, and a pane with no recognized agent shows all
@@ -17,10 +18,10 @@ type AslWindow = { label: string, usagePct: number, elapsedPct: number, paceOver
 
 -- ── prebuilt chrome pieces (written by timer callbacks, read by formatters)
 local segPrayer: any? = nil
-local segMoneySlots: { any } = tern.json.array({})
+local segMoneyRest: { any } = tern.json.array({})
 local segZaiSlots: { any } = tern.json.array({})
 local segOpenSlots: { any } = tern.json.array({})
-local widgetMoneyRows: { any } = tern.json.array({})
+local widgetMoneyRest: { any } = tern.json.array({})
 local widgetZaiRows: { any } = tern.json.array({})
 local widgetOpenRows: { any } = tern.json.array({})
 local widgetPrayerRow: any? = nil
@@ -78,13 +79,72 @@ local function gateAllowed(paneId: number?, provider: string): boolean
 end
 
 -- ── rebuild (timer callbacks only) ──────────────────────────────────────
-local function moneyRowsFrom(money: any): { any }
+-- Money chrome builders. REPO is pane-scoped: repoWindowFor picks the byRepo
+-- bucket matching basename(focused pane cwd); a known cwd with no bucket
+-- reads $0.00 (honest empty), an unknown cwd falls back to the global repo
+-- window (nil → slot/row omitted). DAY/7DAY/30DAY stay global windows.
+-- Widget-bar pills ellipsize past ~21 chars, so slot tokens render bare (no
+-- parens) and labels stay full; widget rows keep the parenthesized form.
+
+-- REPO status slot for ONE resolved window table (per pane via repoWindowFor).
+local function repoMoneySlot(w: any): any?
+	if type(w) ~= "table" or type(w.usd) ~= "number" then
+		return nil
+	end
+	local tokens = if type(w.tokens) == "number" then " " .. format.fmtTokens(w.tokens) else ""
+	return {
+		icon = "stack",
+		text = "REPO " .. fmtMoney(w.usd) .. tokens,
+		tone = "ok",
+		command = EXPAND,
+	}
+end
+
+-- Global money slots only (DAY/7DAY/30DAY) — REPO is added per pane at render time.
+local function otherMoneySlots(m: any): { any }
+	local slots: { any } = tern.json.array({})
+	if type(m) ~= "table" then
+		return slots
+	end
+	local spec: { any } = {
+		{ lbl = "DAY", w = m.day },
+		{ lbl = "7DAY", w = m.d7 },
+		{ lbl = "30DAY", w = m.d30 },
+	}
+	for _, r in spec do
+		if type(r.w) == "table" and type(r.w.usd) == "number" then
+			local tokens = if type(r.w.tokens) == "number" then " " .. format.fmtTokens(r.w.tokens) else ""
+			slots[#slots + 1] = {
+				icon = "stack",
+				text = r.lbl .. " " .. fmtMoney(r.w.usd) .. tokens,
+				tone = "ok",
+				command = EXPAND,
+			}
+		end
+	end
+	return slots
+end
+
+-- REPO widget row for ONE resolved window table (per pane via repoWindowFor).
+local function repoMoneyRow(w: any): any?
+	if type(w) ~= "table" or type(w.usd) ~= "number" then
+		return nil
+	end
+	return {
+		label = "REPO",
+		text = fmtMoney(w.usd)
+			.. (if type(w.tokens) == "number" then " (" .. format.fmtTokens(w.tokens) .. ")" else ""),
+		tone = "ok",
+	}
+end
+
+-- Global money rows (DAY/7DAY/30DAY + sub) — REPO is added per pane at render time.
+local function otherMoneyRows(money: any): { any }
 	local rows: { any } = tern.json.array({})
 	if type(money) ~= "table" then
 		return rows
 	end
 	local spec: { any } = {
-		{ lbl = "REPO", w = money.repo },
 		{ lbl = "DAY", w = money.day },
 		{ lbl = "7DAY", w = money.d7 },
 		{ lbl = "30DAY", w = money.d30 },
@@ -103,6 +163,31 @@ local function moneyRowsFrom(money: any): { any }
 		rows[#rows + 1] = { label = "sub", text = fmtMoney(money.sub), tone = "muted" }
 	end
 	return rows
+end
+
+-- Money snapshot accessor: `snapshot` itself is nil before the first watcher
+-- tick (or if the kv read fails) — chrome formatters must not index it directly.
+local function moneyNow(): any
+	return if snapshot ~= nil then snapshot.money else nil
+end
+
+-- REPO window for the focused pane: bucket keyed by basename(pane.cwd).
+-- Known cwd, missing/invalid bucket → $0.00 (honest empty bucket). Unknown
+-- cwd (nil/"") → global repo window; nil when that is missing too, so the
+-- slot/row is omitted exactly like a missing window today.
+local function repoWindowFor(money: any, pane: any): any?
+	local global = if type(money) == "table" then money.repo else nil
+	if pane ~= nil and type(pane.cwd) == "string" and pane.cwd ~= "" then
+		local b = format.lastSegment(pane.cwd)
+		if b ~= nil and type(money) == "table" and type(money.byRepo) == "table" then
+			local r = money.byRepo[b]
+			if type(r) == "table" and type(r.usd) == "number" then
+				return { usd = r.usd, tokens = if type(r.tokens) == "number" then r.tokens else 0 }
+			end
+			return { usd = 0, tokens = 0 }
+		end
+	end
+	return global
 end
 
 local function windowRowsFrom(providerLabel: string, data: any, now: number): { any }
@@ -142,34 +227,6 @@ local function barFrom(data: any): any?
 		value = math.max(0, math.min(1, w.usagePct / 100)),
 		text = w.label .. " " .. math.floor(w.usagePct + 0.5) .. "%",
 	}
-end
-
--- One status slot per money window that has data — REPO/DAY/7DAY/30DAY
--- rotate individually. Widget-bar pills ellipsize past ~21 chars, so tokens
--- render bare (no parens) and labels stay full.
-local function moneySlots(m: any): { any }
-	local slots: { any } = tern.json.array({})
-	if type(m) ~= "table" then
-		return slots
-	end
-	local spec: { any } = {
-		{ lbl = "REPO", w = m.repo },
-		{ lbl = "DAY", w = m.day },
-		{ lbl = "7DAY", w = m.d7 },
-		{ lbl = "30DAY", w = m.d30 },
-	}
-	for _, r in spec do
-		if type(r.w) == "table" and type(r.w.usd) == "number" then
-			local tokens = if type(r.w.tokens) == "number" then " " .. format.fmtTokens(r.w.tokens) else ""
-			slots[#slots + 1] = {
-				icon = "stack",
-				text = r.lbl .. " " .. fmtMoney(r.w.usd) .. tokens,
-				tone = "ok",
-				command = EXPAND,
-			}
-		end
-	end
-	return slots
 end
 
 -- `3h 22m over` → `3h over`; `30m under` stays one unit; `0m under` (on
@@ -256,8 +313,8 @@ local function rebuild()
 		widgetPrayerRow = nil
 	end
 
-	segMoneySlots = moneySlots(m)
-	widgetMoneyRows = moneyRowsFrom(m)
+	segMoneyRest = otherMoneySlots(m)
+	widgetMoneyRest = otherMoneyRows(m)
 
 	segZaiSlots = quotaSlots("zai", snapshot.zai)
 	segOpenSlots = quotaSlots("oc", snapshot.opencode)
@@ -286,7 +343,11 @@ tern.chrome.status(function(pane)
 	if segPrayer then
 		candidates[#candidates + 1] = segPrayer
 	end
-	for _, s in segMoneySlots do
+	local rs = repoMoneySlot(repoWindowFor(moneyNow(), pane))
+	if rs then
+		candidates[#candidates + 1] = rs
+	end
+	for _, s in segMoneyRest do
 		candidates[#candidates + 1] = s
 	end
 	if gateAllowed(pid, "zai") then
@@ -319,7 +380,11 @@ tern.chrome.widget("quota", {
 			bar = widgetOpenBar
 		end
 		local rows: { any } = tern.json.array({})
-		for _, r in widgetMoneyRows do
+		local rr = repoMoneyRow(repoWindowFor(moneyNow(), pane))
+		if rr then
+			rows[#rows + 1] = rr
+		end
+		for _, r in widgetMoneyRest do
 			rows[#rows + 1] = r
 		end
 		if gateAllowed(pid, "zai") then

@@ -18,7 +18,11 @@
 --
 -- Patch shape (exactly):
 --   { repo = {usd, tokens}, repoName = string?, day = {usd, tokens}, d7 = {usd, tokens},
---     d30 = {usd, tokens}, sub = number, entries = int }
+--     d30 = {usd, tokens}, sub = number, entries = int,
+--     byRepo = { [basename] = {usd, tokens} } }
+-- byRepo is the full per-repo ledger keyed by repo basename (tok renamed to tokens);
+-- window.luau scopes the REPO segment per focused pane via this map, while global
+-- repo/repoName remain the Status Panel window and the fallback.
 -- When repoName resolves to nil (no panes / no cwd), repo carries ALL-TIME totals and the
 -- renderer decides display (assignment override of money.ts, where an unknown current repo
 -- simply leaves repo at 0).
@@ -491,6 +495,12 @@ local function completePass()
 		vmKB = math.floor(collectgarbage("count")),
 	})
 	if onPart ~= nil then
+		-- Full per-repo ledger for window.luau's per-focused-pane REPO lookup: same bucket
+		-- shape as the windows (tok renamed tokens), keyed by repo basename; may be empty.
+		local byRepo: { [string]: { usd: number, tokens: number } } = {}
+		for name, r in a.byRepo do
+			byRepo[name] = { usd = r.usd, tokens = r.tok }
+		end
 		pcall(onPart, {
 			repo = { usd = repoUsd, tokens = repoTok },
 			repoName = repoName,
@@ -499,6 +509,7 @@ local function completePass()
 			d30 = { usd = a.monthUsd, tokens = a.monthTok },
 			sub = a.subUsd,
 			entries = a.entries,
+			byRepo = byRepo,
 		}, nil)
 	end
 	pass = nil
