@@ -1,13 +1,14 @@
 --!strict
 -- Agent Statusline — window half.
--- ZERO-WORK chrome formatters (4 ms budget): segments and the quota widget
--- are COMPOSED FROM PREBUILT UPVALUES per focused pane — no tern.kv, no
--- agents:list inside a formatter. A 5 s tern.timer watches tern.kv
--- "asl/snapshot".seq and refreshes chrome on change (or when the rendered
--- minute rolls over, for the clock chip). Provider gating via
--- cx.agents:list() runs ONLY in timer/event callbacks (60 s tick +
--- focus/agent_state/window_start); the gate maps AgentBlock.model per pane,
--- and a pane with no recognized agent shows all key-bearing providers.
+-- ZERO-WORK chrome formatters (4 ms budget): the status bar and the quota
+-- widget are COMPOSED FROM PREBUILT UPVALUES per focused pane — no tern.kv,
+-- no agents:list inside a formatter. A 5 s tern.timer watches tern.kv
+-- "asl/snapshot".seq, refreshes chrome on every tick, and rotates the status
+-- bar one notch per tick (5 s cadence) through clock · prayer · money ·
+-- quota. Provider gating via cx.agents:list() runs ONLY in timer/event
+-- callbacks (60 s tick + focus/agent_state/window_start); the gate maps
+-- AgentBlock.model per pane, and a pane with no recognized agent shows all
+-- key-bearing providers.
 local format = require("./lib/format")
 local windows = require("./lib/windows")
 
@@ -27,10 +28,12 @@ local widgetZaiBar: any? = nil -- { value, text }
 local widgetOpenBar: any? = nil
 local widgetDigest: string? = nil
 local snapshot: any = nil
-local lastSeq = -1
-local lastMinuteKey = ""
 -- pane id → provider gate ("zai" | "opencode"); missing = show all key-bearing
 local providerByPane: { [number]: string } = {}
+
+-- Which candidate the status bar shows: advanced one notch per 5 s watcher
+-- tick; the formatter indexes candidates[(rotIdx % #candidates) + 1].
+local rotIdx = 0
 
 local EXPAND = "plugin.agent-statusline.expand"
 
@@ -229,30 +232,33 @@ local function rebuild()
 		digest[#digest + 1] = (widgetPrayerRow :: any).text
 	end
 	widgetDigest = if #digest > 0 then table.concat(digest, " · ") else nil
-
-	lastMinuteKey = os.date("%a%H:%M", math.floor(now / 1000)) :: string
 end
 
 -- ── formatters: compose per focused pane from upvalues (4 ms budget) ────
+-- ONE segment: the candidates in fixed order (clock · prayer · money ·
+-- quota), showing the rotIdx-th — a 5 s rotating bar, not five chips.
 tern.chrome.status(function(pane)
 	local pid = if pane ~= nil then pane.pane else nil
-	local segs: { any } = {}
+	local candidates: { any } = {}
 	if segClock then
-		segs[#segs + 1] = segClock
+		candidates[#candidates + 1] = segClock
 	end
 	if segPrayer then
-		segs[#segs + 1] = segPrayer
+		candidates[#candidates + 1] = segPrayer
 	end
 	if segMoney then
-		segs[#segs + 1] = segMoney
+		candidates[#candidates + 1] = segMoney
 	end
 	if segZai and gateAllowed(pid, "zai") then
-		segs[#segs + 1] = segZai
+		candidates[#candidates + 1] = segZai
 	end
 	if segOpen and gateAllowed(pid, "opencode") then
-		segs[#segs + 1] = segOpen
+		candidates[#candidates + 1] = segOpen
 	end
-	return if #segs > 0 then segs else nil
+	if #candidates == 0 then
+		return nil
+	end
+	return { candidates[(rotIdx % #candidates) + 1] }
 end)
 
 tern.chrome.widget("quota", {
@@ -425,18 +431,14 @@ tern.command({
 -- ── watcher + gating timers (timer callbacks: roomy budgets) ────────────
 local function watcher(_cx: any?)
 	local ok, s = pcall(tern.kv.get, "asl/snapshot")
-	local changed = false
 	if ok and type(s) == "table" then
 		snapshot = s
 		rebuild()
-		if (s.seq or -1) ~= lastSeq or os.date("%a%H:%M", math.floor(epochMs() / 1000)) ~= lastMinuteKey then
-			lastSeq = s.seq or -1
-			changed = true
-		end
 	end
-	if changed then
-		tern.chrome.refresh()
-	end
+	-- Rotate one notch per tick and re-render unconditionally: the bar shows
+	-- its next candidate every 5 s even when no snapshot data moved.
+	rotIdx += 1
+	tern.chrome.refresh()
 	tern.timer(5000, watcher)
 end
 

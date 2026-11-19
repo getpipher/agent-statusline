@@ -20,7 +20,7 @@ tern plugin install github.com/getpipher/agent-statusline
 
 | Surface | Content |
 | --- | --- |
-| Status segments | clock chip · next-prayer chip · `DAY $…` money chip · active-provider quota chip |
+| Status bar | one rotating segment (5 s cadence): clock · next prayer · `DAY $…` money · active-provider quota — click opens the Status Panel |
 | Quota meter widget (opt-in) | rolling-window usage bar, hover card with every quota window, money windows and next prayer |
 | Status panel (click a segment / `ctrl+shift+s`) | info header (weekday/clock, Hijri + Gregorian, city), five prayers, money windows (REPO/DAY/7DAY/30DAY), quota windows with pace + reset, versions footer |
 
