@@ -1,0 +1,8 @@
+schema = 1
+id = "agent-statusline"
+name = "Agent Statusline"
+version = "0.1.0"
+description = "Clock, deen, money and quota statusline for Tern — successor to @getpipher/omp-statusline."
+icon = "gauge"
+host = "host.luau"
+window = "window.luau"
