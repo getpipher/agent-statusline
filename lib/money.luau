@@ -29,6 +29,13 @@
 -- completion the module writes per-file records to kv "asl/scan" as
 -- {[absPath] = {bytes, cost, tokens, entries, lastSeenMs}} and emits the patch.
 --
+-- Robustness (hardened after a live freeze, issue #1 follow-up): the chunk chain re-arms
+-- BEFORE each chunk, so a handler-level OOM can never kill the loop; a pass that saw no
+-- files emits no patch and writes no records (a transient walk failure must not zero the
+-- ledger or wipe the records); a failed sessions-root listing aborts the pass instead of
+-- completing it. Pass telemetry (started/ended/files/vmKB, or {aborted=...}) lands in
+-- kv "asl/pass".
+--
 -- Deviations from money.ts, forced by the tern runtime (behavior otherwise identical):
 --   • No stat API: asl/scan's bytes = #bytes read and lastSeenMs = os.time()*1000 (wall clock
 --     is second-resolution, so window boundaries can differ from Date.now() by under a second).
@@ -76,6 +83,7 @@ local onPart = nil -- (patch, nil) | (nil, reason); set by M.start
 local started = false
 local gen = 0 -- schedule-chain generation; guards M.refresh against timer multiplication
 local pass = nil -- active pass state (dirs/files cursors, entries, per-file records) or nil
+local passAbortWriteMs = 0 -- last kv telemetry write for an aborted pass (throttle)
 
 -- Hinnant's days_from_civil, same convention as lib/windows.luau (pure epoch math, no local
 -- calendar dependency). Kept module-local because windows.luau does not export it.
@@ -434,6 +442,7 @@ local function startPass()
 		files = {},
 		fi = 1,
 		scan = {},
+		startedMs = startMs,
 		midnightMs = midnightMs,
 		weekStart = hourFloor - 7 * DAY_MS,
 		monthStart = hourFloor - 30 * DAY_MS,
@@ -454,6 +463,15 @@ local function startPass()
 end
 
 local function completePass()
+	if #pass.files == 0 then
+		-- A pass that never saw a single file proved nothing (transient root/walk failure —
+		-- seen live right after an OOM spell). Emitting its all-zero aggregate would zero the
+		-- ledger and writing its empty scan map would wipe the persisted records. Neither happens:
+		-- the next chunk restarts the walk against the untouched last-good state.
+		pass = nil
+		pcall(tern.kv.set, "asl/pass", { aborted = "walk saw no files", endedMs = wallMs() })
+		return
+	end
 	local repoName = resolveRepoName()
 	local a = pass.agg
 	-- Assignment override of money.ts: nil repoName (no pane cwd) → repo carries all-time.
@@ -464,6 +482,14 @@ local function completePass()
 		repoTok = if r then r.tok else 0
 	end
 	pcall(tern.kv.set, "asl/scan", pass.scan)
+	-- Pass telemetry (diagnostic): wall duration, file count and VM heap at completion —
+	-- the instrument for the stochastic handler-OOM investigation (kv "asl/pass").
+	pcall(tern.kv.set, "asl/pass", {
+		startedMs = pass.startedMs,
+		endedMs = wallMs(),
+		files = #pass.files,
+		vmKB = math.floor(collectgarbage("count")),
+	})
 	if onPart ~= nil then
 		pcall(onPart, {
 			repo = { usd = repoUsd, tokens = repoTok },
@@ -508,7 +534,18 @@ local function runChunk()
 						pass.oom = true -- allocation failure inside the listing: retry this dir next chunk
 						return
 					end
-					table.remove(pass.stack) -- failed listing (missing root, transient): skipped
+					if t.mode == "root" then
+						-- The sessions tree itself failed to list. Completing here would emit a
+						-- zero ledger and wipe the records; abort instead and retry next chunk.
+						-- Telemetry is throttled: a permanently broken root must not churn kv.
+						if wallMs() - passAbortWriteMs > 60000 then
+							passAbortWriteMs = wallMs()
+							pcall(tern.kv.set, "asl/pass", { aborted = "root list failed: " .. tostring(res), endedMs = wallMs() })
+						end
+						pass = nil
+						return
+					end
+					table.remove(pass.stack) -- failed listing (missing child dir, transient): skipped
 				end
 			else
 				local name = t.names[t.ni]
@@ -551,8 +588,10 @@ local function runChunk()
 	end
 end
 
--- Self-re-arming chunk loop. All paths re-arm (the loop must never die); pcall keeps failures
--- from raising out of the timer body. One pending timer at all times via the generation guard.
+-- Self-re-arming chunk loop. The next tick is scheduled BEFORE the chunk runs: a handler
+-- killed by a VM allocation failure ("memory error: not enough memory" — the pcall below
+-- cannot catch it) must never take the whole chain down with it (seen live: money frozen
+-- until the next reload). One pending timer at all times via the generation guard.
 local function schedule(ms: number)
 	gen += 1
 	local myGen = gen
@@ -560,6 +599,7 @@ local function schedule(ms: number)
 		if myGen ~= gen then
 			return -- superseded by a newer schedule (M.refresh); that chain owns the loop
 		end
+		schedule(CHUNK_MS)
 		local ok, err = pcall(runChunk)
 		if not ok then
 			-- Unexpected crash mid-pass: drop partial state, report once, keep the loop alive.
@@ -569,7 +609,6 @@ local function schedule(ms: number)
 				pcall(onPart, nil, "money scan failed: " .. tostring(err))
 			end
 		end
-		schedule(CHUNK_MS)
 	end)
 end
 
@@ -580,7 +619,7 @@ function M.start(cb: (part: any, err: string?) -> ())
 	end
 	started = true
 	onPart = cb
-	schedule(0) -- cold pass begins at once
+	schedule(0) -- the first pass begins at once
 end
 
 -- Forces one immediate chunk (supersedes the pending tick); the normal loop resumes after.
