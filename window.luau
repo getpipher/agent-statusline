@@ -4,9 +4,10 @@
 -- widget are COMPOSED FROM PREBUILT UPVALUES per focused pane — no tern.kv,
 -- no agents:list inside a formatter. A 5 s tern.timer watches tern.kv
 -- "asl/snapshot".seq, refreshes chrome on every tick, and rotates the status
--- bar one notch per tick (5 s cadence) through clock · prayer · money ·
--- quota. Provider gating via cx.agents:list() runs ONLY in timer/event
--- callbacks (60 s tick + focus/agent_state/window_start); the gate maps
+-- bar one notch per tick (5 s cadence) through prayer · every money window
+-- (REPO/DAY/7DAY/30DAY) · every quota window of the pane's providers.
+-- Provider gating via cx.agents:list() runs ONLY in timer/event callbacks
+-- (60 s tick + focus/agent_state/window_start); the gate maps
 -- AgentBlock.model per pane, and a pane with no recognized agent shows all
 -- key-bearing providers.
 local format = require("./lib/format")
@@ -15,11 +16,10 @@ local windows = require("./lib/windows")
 type AslWindow = { label: string, usagePct: number, elapsedPct: number, paceOverSec: number, resetMs: number }
 
 -- ── prebuilt chrome pieces (written by timer callbacks, read by formatters)
-local segClock: any? = nil
 local segPrayer: any? = nil
-local segMoney: any? = nil
-local segZai: any? = nil
-local segOpen: any? = nil
+local segMoneySlots: { any } = tern.json.array({})
+local segZaiSlots: { any } = tern.json.array({})
+local segOpenSlots: { any } = tern.json.array({})
 local widgetMoneyRows: { any } = tern.json.array({})
 local widgetZaiRows: { any } = tern.json.array({})
 local widgetOpenRows: { any } = tern.json.array({})
@@ -144,24 +144,54 @@ local function barFrom(data: any): any?
 	}
 end
 
-local function providerSegment(providerLabel: string, data: any): any?
-	if type(data) ~= "table" or type(data.windows) ~= "table" or #data.windows == 0 then
-		return nil
+-- One status slot per money window that has data — REPO/DAY/7DAY/30DAY
+-- rotate individually, tokens paren'd like the omp renderer's row.
+local function moneySlots(m: any): { any }
+	local slots: { any } = tern.json.array({})
+	if type(m) ~= "table" then
+		return slots
 	end
-	local w = data.windows[1]
-	if type(w) ~= "table" or type(w.usagePct) ~= "number" then
-		return nil
-	end
-	local len = windowLen(w)
-	local pace = windows.paceText(len, w.usagePct, w.elapsedPct or 0)
-	local text = providerLabel .. " " .. w.label .. " " .. math.floor(w.usagePct + 0.5) .. "%"
-		.. (if pace ~= "" then " · " .. pace else "")
-	return {
-		icon = "gauge",
-		text = text,
-		tone = windows.heat(w.usagePct, (w.paceOverSec or 0) > 0),
-		command = EXPAND,
+	local spec: { any } = {
+		{ lbl = "REPO", w = m.repo },
+		{ lbl = "DAY", w = m.day },
+		{ lbl = "7DAY", w = m.d7 },
+		{ lbl = "30DAY", w = m.d30 },
 	}
+	for _, r in spec do
+		if type(r.w) == "table" and type(r.w.usd) == "number" then
+			local tokens = if type(r.w.tokens) == "number" then " (" .. format.fmtTokens(r.w.tokens) .. ")" else ""
+			slots[#slots + 1] = {
+				icon = "stack",
+				text = r.lbl .. " " .. fmtMoney(r.w.usd) .. tokens,
+				tone = "ok",
+				command = EXPAND,
+			}
+		end
+	end
+	return slots
+end
+
+-- One status slot per quota window of a provider — 5hrs/7DAY(/MONTH) rotate
+-- individually with their own pace + heat tone.
+local function quotaSlots(providerLabel: string, data: any): { any }
+	local slots: { any } = tern.json.array({})
+	if type(data) ~= "table" or type(data.windows) ~= "table" then
+		return slots
+	end
+	for _, w in data.windows do
+		if type(w) == "table" and type(w.usagePct) == "number" then
+			local len = windowLen(w)
+			local pace = windows.paceText(len, w.usagePct, w.elapsedPct or 0)
+			slots[#slots + 1] = {
+				icon = "gauge",
+				text = providerLabel .. " " .. w.label .. " " .. math.floor(w.usagePct + 0.5) .. "%"
+					.. (if pace ~= "" then " · " .. pace else ""),
+				tone = windows.heat(w.usagePct, (w.paceOverSec or 0) > 0),
+				command = EXPAND,
+			}
+		end
+	end
+	return slots
 end
 
 local function rebuild()
@@ -171,13 +201,6 @@ local function rebuild()
 	end
 	local d = snapshot.deen
 	local m = snapshot.money
-
-	segClock = {
-		icon = "clock",
-		text = format.formatWeekday(now) .. " " .. format.formatClock(now),
-		tone = "accent",
-		command = EXPAND,
-	}
 
 	segPrayer = nil
 	if type(d) == "table" and type(d.nextPrayer) == "table" then
@@ -211,14 +234,11 @@ local function rebuild()
 		widgetPrayerRow = nil
 	end
 
-	segMoney = nil
-	if type(m) == "table" and type(m.day) == "table" and type(m.day.usd) == "number" then
-		segMoney = { icon = "stack", text = "DAY " .. fmtMoney(m.day.usd), tone = "ok", command = EXPAND }
-	end
+	segMoneySlots = moneySlots(m)
 	widgetMoneyRows = moneyRowsFrom(m)
 
-	segZai = providerSegment("zai", snapshot.zai)
-	segOpen = providerSegment("opencode", snapshot.opencode)
+	segZaiSlots = quotaSlots("zai", snapshot.zai)
+	segOpenSlots = quotaSlots("opencode", snapshot.opencode)
 	widgetZaiRows = windowRowsFrom("zai", snapshot.zai, now)
 	widgetOpenRows = windowRowsFrom("opencode", snapshot.opencode, now)
 	widgetZaiBar = barFrom(snapshot.zai)
@@ -235,25 +255,27 @@ local function rebuild()
 end
 
 -- ── formatters: compose per focused pane from upvalues (4 ms budget) ────
--- ONE segment: the candidates in fixed order (clock · prayer · money ·
--- quota), showing the rotIdx-th — a 5 s rotating bar, not five chips.
+-- ONE segment: candidates in fixed order (prayer · every money window ·
+-- every quota window of the pane's providers), showing the rotIdx-th —
+-- a 5 s rotating bar, one slot at a time, so nothing truncates.
 tern.chrome.status(function(pane)
 	local pid = if pane ~= nil then pane.pane else nil
 	local candidates: { any } = {}
-	if segClock then
-		candidates[#candidates + 1] = segClock
-	end
 	if segPrayer then
 		candidates[#candidates + 1] = segPrayer
 	end
-	if segMoney then
-		candidates[#candidates + 1] = segMoney
+	for _, s in segMoneySlots do
+		candidates[#candidates + 1] = s
 	end
-	if segZai and gateAllowed(pid, "zai") then
-		candidates[#candidates + 1] = segZai
+	if gateAllowed(pid, "zai") then
+		for _, s in segZaiSlots do
+			candidates[#candidates + 1] = s
+		end
 	end
-	if segOpen and gateAllowed(pid, "opencode") then
-		candidates[#candidates + 1] = segOpen
+	if gateAllowed(pid, "opencode") then
+		for _, s in segOpenSlots do
+			candidates[#candidates + 1] = s
+		end
 	end
 	if #candidates == 0 then
 		return nil
