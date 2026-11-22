@@ -13,6 +13,7 @@
 -- key-bearing providers.
 local format = require("./lib/format")
 local windows = require("./lib/windows")
+local keysStore = require("./lib/keys")
 
 type AslWindow = { label: string, usagePct: number, elapsedPct: number, paceOverSec: number, resetMs: number }
 
@@ -40,6 +41,13 @@ local EXPAND = "plugin.agent-statusline.expand"
 
 local function epochMs(): number
 	return os.time() * 1000
+end
+
+-- Terminal and password-manager pastes can carry trailing spaces/newlines; a
+-- dirty key stores fine but 401s at the usage API — trim before storing.
+local function trim(s: string): string
+	local t = s:match("^%s*(.-)%s*$")
+	return if t ~= nil then t else s
 end
 
 -- Window length for a stored quota window (shared helper in lib/windows).
@@ -468,26 +476,63 @@ tern.command({
 	title = "Set Keys",
 	run = function(cx)
 		cx:prompt({ placeholder = "z.ai API key (empty keeps current)" }):next(function(zaiKey, _err1, cx1)
-			if zaiKey == nil then
-				cx1:toast("info", "Cancelled — keys unchanged")
-				return
-			end
 			cx1:prompt({ placeholder = "OpenCode Go key (empty to skip)" }):next(function(ocKey, _err2, cx2)
+				local zai = if type(zaiKey) == "string" then trim(zaiKey) else ""
+				local oc = if type(ocKey) == "string" then trim(ocKey) else ""
+				if zai == "" and oc == "" then
+					cx2:toast("info", "Cancelled — keys unchanged")
+					return
+				end
 				local keys: any = {}
 				local okK, existing = pcall(tern.kv.get, "asl/keys")
 				if okK and type(existing) == "table" then
 					keys = existing
 				end
-				if zaiKey ~= "" then
-					keys.zai = zaiKey
+				if zai ~= "" then
+					keys.zai = zai
 				end
-				if type(ocKey) == "string" and ocKey ~= "" then
-					keys.opencode = ocKey
+				if oc ~= "" then
+					keys.opencode = oc
 				end
-				tern.kv.set("asl/keys", keys)
+				local landed = keysStore.store(keys)
 				pcall(tern.kv.set, "asl/refresh-request", epochMs())
-				cx2:toast("success", "Keys stored — quota polls forced")
+				if landed then
+					cx2:toast("success", "Keys stored — quota polls forced")
+				else
+					cx2:toast("error", "Key storage failed — no channel landed")
+				end
 			end)
+		end)
+	end,
+})
+
+tern.command({
+	id = "set-oc-key",
+	title = "Set OpenCode Go Key",
+	run = function(cx)
+		cx:prompt({ placeholder = "OpenCode Go key" }):next(function(ocKey, _err, cx1)
+			if type(ocKey) ~= "string" then
+				cx1:toast("info", "Cancelled — key unchanged")
+				return
+			end
+			local key = trim(ocKey)
+			if key == "" then
+				cx1:toast("info", "Cancelled — key unchanged")
+				return
+			end
+			local keys: any = {}
+			local okK, existing = pcall(tern.kv.get, "asl/keys")
+			if okK and type(existing) == "table" then
+				keys = existing
+			end
+			keys.opencode = key
+			local landed = keysStore.store(keys)
+			pcall(tern.kv.set, "asl/refresh-request", epochMs())
+			if landed then
+				cx1:toast("success", "OpenCode Go key stored — quota poll forced")
+			else
+				cx1:toast("error", "Key storage failed — no channel landed")
+			end
 		end)
 	end,
 })

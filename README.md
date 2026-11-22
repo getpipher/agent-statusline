@@ -41,12 +41,19 @@ Data is read-only side effects of your own machine and accounts:
 Quota rows render only for providers with a resolvable key — missing keys
 shorten the row, they never render placeholders.
 
-1. **Recommended:** the `set-keys` palette command stores keys in the
-   system keychain (secret names `zai-api-key`, `opencode-go-key`).
+1. **Palette:** `Set Keys` (both providers) or `Set OpenCode Go Key` (one prompt,
+   no z.ai needed). Keys are written to tern.kv `asl/keys` **and** a verified
+   keys file at `<tern.plugin.data>/keys.json` (read back before success is
+   reported). The file is plaintext in the user-scoped Tern state dir — same
+   at-rest model as `~/.pi/agent/auth.json`.
 2. Environment variables `ZAI_API_KEY` / `OPENCODE_API_KEY` (read from the
    Tern daemon's environment).
 3. z.ai only: `$HOME/.pi/agent/auth.json` → `{"zai": {"key": …}}` (the same
    fallback file omp-statusline used).
+
+Resolution ladder: kv → keys file → environment → z.ai auth.json. The keys
+file exists because tern.kv writes from the window half have not been observed
+reaching the host's persisted store; the host re-resolves keys every poll cycle.
 
 ## Commands
 
@@ -54,7 +61,7 @@ shorten the row, they never render placeholders.
 | --- | --- | --- |
 | Status Panel | `ctrl+shift+s` | Open the panel block over the focused pane |
 | Refresh | — | Force quota/deen polls on the next host tick |
-| Set Keys | — | Store `zai-api-key` / `opencode-go-key` in the keychain |
+| Set Keys / Set OpenCode Go Key | — | Store quota keys (one or both prompts; keys file verified before success) |
 | Config | — | Set config values (city, country, method, escalateMinutes, zaiPollMs, opencodePollMs) |
 | Debug | — | Copy the snapshot JSON (incl. agent model strings) to the clipboard |
 
