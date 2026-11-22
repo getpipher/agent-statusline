@@ -467,9 +467,9 @@ tern.command({
 	id = "set-keys",
 	title = "Set Keys",
 	run = function(cx)
-		cx:prompt({ placeholder = "z.ai API key" }):next(function(zaiKey, _err1, cx1)
-			if type(zaiKey) ~= "string" or zaiKey == "" then
-				cx1:toast("info", "Cancelled — z.ai key unchanged")
+		cx:prompt({ placeholder = "z.ai API key (empty keeps current)" }):next(function(zaiKey, _err1, cx1)
+			if zaiKey == nil then
+				cx1:toast("info", "Cancelled — keys unchanged")
 				return
 			end
 			cx1:prompt({ placeholder = "OpenCode Go key (empty to skip)" }):next(function(ocKey, _err2, cx2)
@@ -478,7 +478,9 @@ tern.command({
 				if okK and type(existing) == "table" then
 					keys = existing
 				end
-				keys.zai = zaiKey
+				if zaiKey ~= "" then
+					keys.zai = zaiKey
+				end
 				if type(ocKey) == "string" and ocKey ~= "" then
 					keys.opencode = ocKey
 				end
