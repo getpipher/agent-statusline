@@ -63,7 +63,19 @@ local function gateFromAgents(cx: any)
 	for _, a in agents do
 		if type(a) == "table" and type(a.pane) == "number" and type(a.model) == "string" then
 			local m = (a.model :: string):lower()
-			if m:find("zai", 1, true) ~= nil or m:find("glm", 1, true) ~= nil then
+			-- Provider identity wins: for "provider/model" the segment before the
+			-- first "/" decides the gate, so opencode-go/glm-* gates opencode (the
+			-- Go plan's usage API covers its glm models) instead of zai. Substring
+			-- matching stays as the fallback for prefix-less model strings
+			-- (bare "glm-…" → zai, the omp-statusline convention).
+			local provider = m:match("^([^/]+)/")
+			if provider ~= nil then
+				if provider:find("opencode", 1, true) ~= nil then
+					map[a.pane] = "opencode"
+				elseif provider:find("zai", 1, true) ~= nil then
+					map[a.pane] = "zai"
+				end
+			elseif m:find("zai", 1, true) ~= nil or m:find("glm", 1, true) ~= nil then
 				map[a.pane] = "zai"
 			elseif m:find("opencode", 1, true) ~= nil then
 				map[a.pane] = "opencode"
