@@ -518,11 +518,14 @@ tern.command({
 					keys.opencode = oc
 				end
 				local landed = keysStore.store(keys)
-				bridge.requestRefresh()
+				local refreshed = bridge.requestRefresh()
 				if landed then
-					cx2:toast("success", "Keys stored — quota polls forced")
+					cx2:toast("success", if refreshed then "Keys stored — quota polls forced" else "Keys stored")
 				else
 					cx2:toast("error", "Key storage failed — no channel landed")
+				end
+				if not refreshed then
+					cx2:toast("error", "Refresh request failed — no channel landed")
 				end
 			end)
 		end)
@@ -550,11 +553,14 @@ tern.command({
 			end
 			keys.opencode = key
 			local landed = keysStore.store(keys)
-			bridge.requestRefresh()
+			local refreshed = bridge.requestRefresh()
 			if landed then
-				cx1:toast("success", "OpenCode Go key stored — quota poll forced")
+				cx1:toast("success", if refreshed then "OpenCode Go key stored — quota poll forced" else "OpenCode Go key stored")
 			else
 				cx1:toast("error", "Key storage failed — no channel landed")
+			end
+			if not refreshed then
+				cx1:toast("error", "Refresh request failed — no channel landed")
 			end
 		end)
 	end,
@@ -583,11 +589,14 @@ tern.command({
 					cfg[key] = value
 				end
 				local landed = bridge.storeConfig(cfg)
-				bridge.requestRefresh()
+				local refreshed = bridge.requestRefresh()
 				if landed then
 					cx2:toast("success", key .. " = " .. value)
 				else
 					cx2:toast("error", "Config storage failed — no channel landed")
+				end
+				if not refreshed then
+					cx2:toast("error", "Refresh request failed — no channel landed")
 				end
 			end)
 		end)
