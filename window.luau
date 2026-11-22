@@ -354,11 +354,9 @@ local function rebuild()
 	widgetDigest = if #digest > 0 then table.concat(digest, " · ") else nil
 end
 
--- ── formatters: compose per focused pane from upvalues (4 ms budget) ────
--- ONE segment: candidates in fixed order (prayer · every money window ·
--- every quota window of the pane's providers), showing the rotIdx-th —
--- a 5 s rotating bar, one slot at a time, so nothing truncates.
-tern.chrome.status(function(pane)
+-- Pure chrome digests shared by Tern's renderers and Debug. They read only
+-- prebuilt upvalues and pure helpers: no kv, no agents:list, no rotIdx change.
+local function statusCandidates(pane: any?): { any }
 	local pid = if pane ~= nil then pane.pane else nil
 	local candidates: { any } = {}
 	if segPrayer then
@@ -381,6 +379,57 @@ tern.chrome.status(function(pane)
 			candidates[#candidates + 1] = s
 		end
 	end
+	return candidates
+end
+
+local function quotaWidgetRows(pane: any?): { any }
+	local pid = if pane ~= nil then pane.pane else nil
+	local rows: { any } = tern.json.array({})
+	local rr = repoMoneyRow(repoWindowFor(moneyNow(), pane))
+	if rr then
+		rows[#rows + 1] = rr
+	end
+	for _, r in widgetMoneyRest do
+		rows[#rows + 1] = r
+	end
+	if gateAllowed(pid, "zai") then
+		for _, r in widgetZaiRows do
+			rows[#rows + 1] = r
+		end
+	end
+	if gateAllowed(pid, "opencode") then
+		for _, r in widgetOpenRows do
+			rows[#rows + 1] = r
+		end
+	end
+	if widgetPrayerRow then
+		rows[#rows + 1] = widgetPrayerRow
+	end
+	rows[#rows + 1] = {
+		id = "refresh",
+		text = "Force quota/deen/money polls",
+		tone = "muted",
+		actions = tern.json.array({ { id = "refresh", label = "Refresh" } }),
+	}
+	return rows
+end
+
+local function quotaWidgetBar(pane: any?): any?
+	local pid = if pane ~= nil then pane.pane else nil
+	if gateAllowed(pid, "zai") and widgetZaiBar then
+		return widgetZaiBar
+	elseif gateAllowed(pid, "opencode") and widgetOpenBar then
+		return widgetOpenBar
+	end
+	return nil
+end
+
+-- ── formatters: compose per focused pane from upvalues (4 ms budget) ────
+-- ONE segment: candidates in fixed order (prayer · every money window ·
+-- every quota window of the pane's providers), showing the rotIdx-th —
+-- a 5 s rotating bar, one slot at a time, so nothing truncates.
+tern.chrome.status(function(pane)
+	local candidates = statusCandidates(pane)
 	if #candidates == 0 then
 		return nil
 	end
@@ -393,40 +442,8 @@ tern.chrome.widget("quota", {
 	icon = "gauge",
 	styles = { "bar", "text" },
 	render = function(pane)
-		local pid = if pane ~= nil then pane.pane else nil
-		local bar = nil
-		if gateAllowed(pid, "zai") and widgetZaiBar then
-			bar = widgetZaiBar
-		elseif gateAllowed(pid, "opencode") and widgetOpenBar then
-			bar = widgetOpenBar
-		end
-		local rows: { any } = tern.json.array({})
-		local rr = repoMoneyRow(repoWindowFor(moneyNow(), pane))
-		if rr then
-			rows[#rows + 1] = rr
-		end
-		for _, r in widgetMoneyRest do
-			rows[#rows + 1] = r
-		end
-		if gateAllowed(pid, "zai") then
-			for _, r in widgetZaiRows do
-				rows[#rows + 1] = r
-			end
-		end
-		if gateAllowed(pid, "opencode") then
-			for _, r in widgetOpenRows do
-				rows[#rows + 1] = r
-			end
-		end
-		if widgetPrayerRow then
-			rows[#rows + 1] = widgetPrayerRow
-		end
-		rows[#rows + 1] = {
-			id = "refresh",
-			text = "Force quota/deen/money polls",
-			tone = "muted",
-			actions = tern.json.array({ { id = "refresh", label = "Refresh" } }),
-		}
+		local bar = quotaWidgetBar(pane)
+		local rows = quotaWidgetRows(pane)
 		return {
 			text = if bar then bar.text else "no quota data",
 			tone = if bar then windows.heat(bar.value * 100, false) else "muted",
@@ -593,12 +610,66 @@ tern.command({
 				end
 			end
 		end
+		-- Prefer the native focused-pane getters; fall back to panes()'s focus
+		-- flag when either getter is unavailable. nil is safe for both digests.
+		local pane: any? = nil
+		local okId, id = pcall(function()
+			return cx.session:focused()
+		end)
+		if okId and type(id) == "number" then
+			local okPane, candidate = pcall(function()
+				return cx.session:pane(id)
+			end)
+			if okPane and type(candidate) == "table" then
+				pane = candidate
+			end
+		end
+		if pane == nil then
+			local okPanes, panes = pcall(function()
+				return cx.session:panes()
+			end)
+			if okPanes and type(panes) == "table" then
+				for _, candidate in panes do
+					if type(candidate) == "table" and candidate.focused == true then
+						pane = candidate
+						break
+					end
+				end
+			end
+		end
+		local candidates = statusCandidates(pane)
+		local candidateTexts: { any } = tern.json.array({})
+		for _, c in candidates do
+			candidateTexts[#candidateTexts + 1] = tostring(c.text)
+		end
+		local showing: any = tern.json.null
+		if #candidates > 0 then
+			showing = tostring(candidates[(rotIdx % #candidates) + 1].text)
+		end
+		local rows = quotaWidgetRows(pane)
+		local rowTexts: { any } = tern.json.array({})
+		for _, r in rows do
+			local label = if type(r.label) == "string" and r.label ~= "" then r.label .. " " else ""
+			rowTexts[#rowTexts + 1] = label .. tostring(r.text)
+		end
+		local bar = quotaWidgetBar(pane)
+		local barText = "no quota data"
+		if bar ~= nil and type(bar.text) == "string" then
+			barText = bar.text
+		end
 		local payload = tern.json.encode({
 			snapshot = if ok then snap else nil,
 			agents = agents,
+			chrome = {
+				focusedPane = if type(pane) == "table" and type(pane.pane) == "number" then pane.pane else tern.json.null,
+				cwd = if type(pane) == "table" and type(pane.cwd) == "string" then pane.cwd else tern.json.null,
+				candidates = candidateTexts,
+				showing = showing,
+				widget = { text = barText, title = widgetDigest, rows = rowTexts },
+			},
 		}, true)
 		cx:copy(payload)
-		cx:toast("success", "Snapshot copied (" .. #payload .. " bytes)")
+		cx:toast("success", "Snapshot + chrome copied (" .. #payload .. " bytes)")
 	end,
 })
 
