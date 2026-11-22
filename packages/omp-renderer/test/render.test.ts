@@ -220,6 +220,8 @@ test("escalation band: snapshot config narrows the band without env override", (
   // 13m left: outside a 12m band → success; inside the 30m default → warning.
   assert.match(renderRows(withConfig, { theme, now: NOW })[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(13m\)/);
   assert.match(renderRows(soon, { theme, now: NOW })[1], /\x1b\[38;2;223;164;70mAsr 15:07 \(13m\)/);
+  // Snapshot config also wins over an explicit caller override.
+  assert.match(renderRows(withConfig, { theme, now: NOW, escalateMinutes: 60 })[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(13m\)/);
 });
 
 test("parseSnapshot: byRepo keeps valid money windows, skips invalid ones", () => {
