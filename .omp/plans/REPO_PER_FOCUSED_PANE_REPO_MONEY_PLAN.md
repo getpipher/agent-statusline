@@ -91,6 +91,8 @@ end
 
 **Unchanged by design** (scope boundary): Status Panel card (`host.luau` `panelMoney` — global REPO + `repoName` header), widget digest (`widgetDigest`, uses `m.day`), `packages/omp-renderer` (its `AslMoney` interface consumes only the optional windows; the extra `byRepo` snapshot field is additive and invisible to it).
 
+> **Follow-up (2026-11-22):** the `packages/omp-renderer` half of this boundary is now superseded. The renderer parses `snapshot.money.byRepo` and scopes its REPO segment by `basename(process.cwd())`, falling back to the global `money.repo` window. See `packages/omp-renderer/src/{read,render,index}.ts` and the regressions in `test/render.test.ts`. Do not restore "global-only" renderer behavior based on the scope above — the note in "Critical files & anchors" that the renderer is "NOT edited" was true for this plan's implementation only.
+
 Wire shape after the change: `snapshot.money = { repo, repoName, day, d7, d30, sub, entries, byRepo }` — everything pre-existing identical, `byRepo` new.
 
 ## Critical files & anchors
@@ -98,7 +100,7 @@ Wire shape after the change: `snapshot.money = { repo, repoName, day, d7, d30, s
 - `lib/money.luau` — `completePass()` patch table (~line 512); header "Patch shape (exactly)" comment (~line 14).
 - `window.luau` — builder functions (~lines 80, 145), upvalue decls (~26–27), `rebuild()` (~247), status formatter (~285), quota widget render (~303).
 - `lib/format.luau` — new `M.lastSegment` export anywhere before `return M`.
-- `packages/omp-renderer/` — NOT edited; only its regression suite runs.
+- `packages/omp-renderer/` — NOT edited in this plan; later scoped to `byRepo` (see follow-up above).
 
 ## Verification
 

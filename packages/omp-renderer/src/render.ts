@@ -145,17 +145,21 @@ export function prayerLine(
   return ` ${glyph("󰣎")} ${cells.join(sep)}`;
 }
 
-export function moneyLine(theme: SlTheme, m: AslMoney, sep: string, accent: AccentFn | null): string | null {
+export function moneyLine(theme: SlTheme, m: AslMoney, sep: string, accent: AccentFn | null, repo?: string): string | null {
   // Option A: accent on the 󰄬 glyph + window labels; dollar values stay
   // success-green. omp labels the all-time window REPO (basename of its cwd) —
-  // the snapshot's repoName is informational only, the label stays REPO.
+  // the snapshot's repoName is informational only, the label stays REPO. A
+  // matching byRepo bucket (per-pane ledger) wins; invalid/missing buckets
+  // degrade to the global window (direct callers needed no new argument).
   const glyph = accent ?? ((t: string) => theme.fg("dim", t));
   const seg = (label: string, w: AslMoneyWindow | undefined): string | null => {
     if (!w) return null;
     const parens = w.tokens !== undefined ? ` ${theme.fg("dim", `(${fmtTokens(w.tokens)})`)}` : "";
     return `${glyph(label)} ${theme.fg("success", `$${w.usd.toFixed(2)}`)}${parens}`;
   };
-  const parts = [seg("REPO", m.repo), seg("DAY", m.day), seg("7DAY", m.d7), seg("30DAY", m.d30)].filter((s) => s !== null);
+  const scoped = repo ? m.byRepo?.[repo] : undefined;
+  const repoWindow = scoped && Number.isFinite(scoped.usd) && (scoped.tokens === undefined || Number.isFinite(scoped.tokens)) ? scoped : m.repo;
+  const parts = [seg("REPO", repoWindow), seg("DAY", m.day), seg("7DAY", m.d7), seg("30DAY", m.d30)].filter((s) => s !== null);
   if (parts.length === 0) return null;
   return ` ${glyph("󰄬")} ${parts.join(sep)}`;
 }
@@ -188,6 +192,8 @@ export interface RenderEnv {
   stamp?: VersionStamp;
   accent?: AccentFn | null;
   escalateMinutes?: number;
+  // Basename of the current omp pane's cwd — selects that repo's byRepo bucket.
+  repo?: string;
 }
 
 export function renderRows(snap: AslSnapshot, env: RenderEnv): string[] {
@@ -198,7 +204,7 @@ export function renderRows(snap: AslSnapshot, env: RenderEnv): string[] {
   lines.push(infoLine(theme, snap, sep, accent, now));
   if (snap.deen?.prayers.length) lines.push(prayerLine(theme, snap.deen, sep, accent, env.escalateMinutes, now, snap.updatedMs));
   if (snap.money) {
-    const money = moneyLine(theme, snap.money, sep, accent);
+    const money = moneyLine(theme, snap.money, sep, accent, env.repo);
     if (money) lines.push(money);
   }
   if (snap.zai && snap.zai.windows.length > 0 && zaiRelevant(env.provider)) {

@@ -31,6 +31,7 @@ export interface AslMoney {
   day?: AslMoneyWindow;
   d7?: AslMoneyWindow;
   d30?: AslMoneyWindow;
+  byRepo?: Record<string, AslMoneyWindow>;
 }
 
 export interface AslProvider {
@@ -140,6 +141,15 @@ function deen(v: unknown): AslDeen | undefined {
 function money(v: unknown): AslMoney | undefined {
   if (typeof v !== "object" || v === null) return undefined;
   const raw = v as Record<string, unknown>;
+  const byRepo: Record<string, AslMoneyWindow> = {};
+  const rawByRepo = raw.byRepo;
+  if (typeof rawByRepo === "object" && rawByRepo !== null) {
+    for (const [name, value] of Object.entries(rawByRepo)) {
+      if (!name) continue;
+      const window = moneyWindow(value);
+      if (window) byRepo[name] = window;
+    }
+  }
   const out: AslMoney = {
     repo: moneyWindow(raw.repo),
     repoName: str(raw.repoName),
@@ -147,7 +157,8 @@ function money(v: unknown): AslMoney | undefined {
     d7: moneyWindow(raw.d7),
     d30: moneyWindow(raw.d30),
   };
-  return out.repo || out.day || out.d7 || out.d30 ? out : undefined;
+  if (Object.keys(byRepo).length > 0) out.byRepo = byRepo;
+  return out.repo || out.day || out.d7 || out.d30 || out.byRepo ? out : undefined;
 }
 
 export function snapshotPath(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, home: string = homedir()): string {

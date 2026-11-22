@@ -9,6 +9,7 @@
 // info row. Snapshot file absent → ZERO rows (no error output). Provider rows
 // gate on ctx.models.current().provider exactly like omp-statusline v0.8.12.
 import { createSnapshotReader } from "./read.ts";
+import { basename } from "node:path";
 import { renderRows, type SlTheme, type VersionStamp } from "./render.ts";
 import { resolveAccent, type AccentFn } from "./accent.ts";
 import { aslVersion, ompVersion, ternVersion } from "./versions.ts";
@@ -68,7 +69,7 @@ export default function agentStatusline(pi: SlApi): void {
     // factory calls, so /theme switches re-dress on the next tick). Session
     // renames re-roll the hue at the next tick — no rename event.
     const accent: AccentFn | null = resolveAccent(true, ctx?.sessionManager?.getSessionName?.(), theme.sessionAccentInputs);
-    return renderRows(snap, { theme, now: Date.now(), provider, stamp, accent });
+    return renderRows(snap, { theme, now: Date.now(), provider, stamp, accent, repo: basename(process.cwd()) });
   }
 
   function renderWidget(): void {

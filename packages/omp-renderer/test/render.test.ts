@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSnapshot, snapshotPath, createSnapshotReader } from "../src/read.ts";
-import { renderRows, heat, paceFromOverSec, zaiRelevant, opencodeRelevant, type SlTheme } from "../src/render.ts";
+import { renderRows, moneyLine, heat, paceFromOverSec, zaiRelevant, opencodeRelevant, type SlTheme } from "../src/render.ts";
 import { getSessionAccentHex, nameToHash } from "../src/accent.ts";
 import type { AslSnapshot } from "../src/read.ts";
 
@@ -197,6 +197,61 @@ test("escalation band: next prayer inside escalateMinutes tints warning", () => 
   // Out of the band → success (covered by the full case at 5h 07m); custom band width honored.
   const wide = renderRows(soon, { theme, now: NOW, escalateMinutes: 10 });
   assert.match(wide[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(13m\)/);
+});
+
+test("parseSnapshot: byRepo keeps valid money windows, skips invalid ones", () => {
+  const raw = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
+  raw["asl/snapshot"].money.byRepo = {
+    "agent-statusline": { usd: 6.78587754, tokens: 63823195 },
+    "other-repo": { usd: 12.5 },
+    "bad-usd": { usd: "x", tokens: 10 },
+    "null-window": null,
+    "string-window": "junk",
+  };
+  const parsed = parseSnapshot(JSON.stringify(raw));
+  assert.ok(parsed);
+  assert.deepEqual(parsed.money?.byRepo, {
+    "agent-statusline": { usd: 6.78587754, tokens: 63823195 },
+    "other-repo": { usd: 12.5 },
+  });
+  // Every pre-existing money field survives the byRepo parse unchanged.
+  assert.deepEqual(parsed.money?.repo, { usd: 68.36, tokens: 1300000000 });
+  assert.equal(parsed.money?.repoName, "agent-statusline");
+  assert.deepEqual(parsed.money?.day, { usd: 26.5, tokens: 4000000 });
+  assert.deepEqual(parsed.money?.d7, { usd: 315.27, tokens: 4000000000 });
+  assert.deepEqual(parsed.money?.d30, { usd: 492.88, tokens: 11300000000 });
+});
+
+const scopedMoney = {
+  ...snap.money!,
+  byRepo: { "agent-statusline": { usd: 6.78587754, tokens: 63823195 } },
+};
+const EXPECTED_SCOPED = ` ${dim("󰄬")} ${[
+  `${dim("REPO")} ${ok("$6.79")} ${dim("(63.8M)")}`,
+  `${dim("DAY")} ${ok("$26.50")} ${dim("(4.0M)")}`,
+  `${dim("7DAY")} ${ok("$315.27")} ${dim("(4.0B)")}`,
+  `${dim("30DAY")} ${ok("$492.88")} ${dim("(11.3B)")}`,
+].join(sep)}`;
+
+test("renderRows/moneyLine: matching repo renders that bucket's $/tokens", () => {
+  const scoped = { ...snap, money: scopedMoney };
+  assert.equal(renderRows(scoped, { theme, now: NOW, repo: "agent-statusline" })[2], EXPECTED_SCOPED);
+  assert.equal(moneyLine(theme, scopedMoney, sep, null, "agent-statusline"), EXPECTED_SCOPED);
+});
+
+test("renderRows: unknown/missing repo falls back to the global REPO window", () => {
+  const scoped = { ...snap, money: scopedMoney };
+  assert.equal(renderRows(scoped, { theme, now: NOW, repo: "not-a-known-repo" })[2], EXPECTED_FULL[2]);
+  assert.equal(renderRows(scoped, { theme, now: NOW })[2], EXPECTED_FULL[2]);
+  assert.equal(renderRows(snap, { theme, now: NOW, repo: "agent-statusline" })[2], EXPECTED_FULL[2]);
+  // A bucket with a non-finite usd is not a valid window → global wins.
+  const invalid = { ...scoped, money: { ...scopedMoney, byRepo: { "agent-statusline": { usd: Number.NaN } } } };
+  assert.equal(renderRows(invalid, { theme, now: NOW, repo: "agent-statusline" })[2], EXPECTED_FULL[2]);
+});
+
+test("renderRows: no repo passed preserves today's exact full output", () => {
+  const lines = renderRows(snap, { theme, now: NOW, stamp: { omp: "18.22.1", asl: "0.1.0", tern: "0.9.28" } });
+  assert.deepEqual(lines, EXPECTED_FULL);
 });
 
 test("accent wraps glyphs + labels only; values keep semantic tokens", () => {
