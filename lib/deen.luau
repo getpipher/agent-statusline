@@ -60,6 +60,7 @@
 local M = {}
 
 local format = require("./format")
+local bridge = require("./bridge")
 
 -- --- api.ts constants ---
 local ALADHAN_URL = "https://api.aladhan.com/v1/timingsByCity"
@@ -262,29 +263,27 @@ local function writeCache(rec: any)
 	pcall(tern.kv.set, "asl/deen", rec)
 end
 
--- --- config (kv contract: read fresh every cycle, never write) ---
+-- --- config (verified file first via lib/bridge; read fresh, never write) ---
 
 local function readConfig(): (string, string, string)
 	local city, country, method = DEFAULT_CITY, DEFAULT_COUNTRY, DEFAULT_METHOD
-	local ok, cfg = pcall(tern.kv.get, "asl/config")
-	if ok and type(cfg) == "table" then
-		if type(cfg.city) == "string" and #cfg.city > 0 then
-			city = cfg.city
-		end
-		if type(cfg.country) == "string" and #cfg.country > 0 then
-			country = cfg.country
-		end
-		if type(cfg.method) == "string" and #cfg.method > 0 then
-			method = cfg.method
-		end
+	local cfg = bridge.readConfig()
+	if type(cfg.city) == "string" and #cfg.city > 0 then
+		city = cfg.city
+	end
+	if type(cfg.country) == "string" and #cfg.country > 0 then
+		country = cfg.country
+	end
+	if type(cfg.method) == "string" and #cfg.method > 0 then
+		method = cfg.method
 	end
 	return city, country, method
 end
 
 -- Manual refresh stamp ("asl/refresh-request"); newer than last handled → force.
 local function refreshPending(): boolean
-	local ok, v = pcall(tern.kv.get, "asl/refresh-request")
-	return ok and type(v) == "number" and v > lastHandledRefresh
+	local v = bridge.readRefresh()
+	return v ~= nil and v > lastHandledRefresh
 end
 
 -- --- network ---
@@ -530,9 +529,9 @@ local function cycleBody(finish: (any, string?, number?) -> ())
 	local now = nowMs()
 
 	-- Manual refresh stamp consumed at cycle start.
-	local reqOk, req = pcall(tern.kv.get, "asl/refresh-request")
+	local req = bridge.readRefresh()
 	local force = false
-	if reqOk and type(req) == "number" and req > lastHandledRefresh then
+	if req ~= nil and req > lastHandledRefresh then
 		force = true
 		lastHandledRefresh = req
 	end

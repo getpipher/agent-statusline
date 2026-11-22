@@ -9,6 +9,7 @@
 -- "7DAY" (unit 6). Fail-soft: every failure delivers on_part(nil, reason) and
 -- the timer loop re-arms on every path.
 local keys = require("./keys")
+local bridge = require("./bridge")
 local windows = require("./windows")
 
 local QUOTA_API = "https://api.z.ai/api/monitor/usage/quota/limit"
@@ -21,15 +22,13 @@ local M = {}
 local onPart: ((part: any, err: string?) -> ())? = nil
 local generation = 0
 
--- Fresh per cycle: kv "asl/config".zaiPollMs, default 180000, floor 30000.
--- tern.kv.get can raise on read errors — pcall and fall back to the default.
+-- Fresh per cycle: the verified config file (kv fallback) via lib/bridge —
+-- default 180000, floor 30000. bridge never raises.
 local function pollMs(): number
-	local ok, cfg = pcall(tern.kv.get, "asl/config")
-	if ok and type(cfg) == "table" then
-		local v = cfg.zaiPollMs
-		if type(v) == "number" and v == v and v < math.huge and v > 0 then
-			return math.max(MIN_POLL_MS, math.floor(v))
-		end
+	local cfg = bridge.readConfig()
+	local v = cfg.zaiPollMs
+	if type(v) == "number" and v == v and v < math.huge and v > 0 then
+		return math.max(MIN_POLL_MS, math.floor(v))
 	end
 	return DEFAULT_POLL_MS
 end

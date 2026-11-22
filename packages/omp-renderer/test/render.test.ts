@@ -200,6 +200,31 @@ test("escalation band: next prayer inside escalateMinutes tints warning", () => 
   assert.match(wide[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(13m\)/);
 });
 
+test("parseSnapshot: config.escalateMinutes accepts finite positive numbers only", () => {
+  const raw = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
+  raw["asl/snapshot"].config = { escalateMinutes: 12 };
+  assert.equal(parseSnapshot(JSON.stringify(raw))?.config?.escalateMinutes, 12);
+  raw["asl/snapshot"].config = { escalateMinutes: "x" };
+  assert.equal(parseSnapshot(JSON.stringify(raw))?.config?.escalateMinutes, undefined);
+  raw["asl/snapshot"].config = { escalateMinutes: -5 };
+  assert.equal(parseSnapshot(JSON.stringify(raw))?.config?.escalateMinutes, undefined);
+  raw["asl/snapshot"].config = "garbage";
+  assert.equal(parseSnapshot(JSON.stringify(raw))?.config, undefined);
+});
+
+test("escalation band: snapshot config narrows the band without env override", () => {
+  const soon = {
+    ...snap,
+    deen: { ...snap.deen!, nextPrayer: { name: "Asr", inSec: 900 } },
+  };
+  const withConfig = Object.assign({}, soon, { config: { escalateMinutes: 12 } });
+  // 13m left: outside a 12m band → success; inside the 30m default → warning.
+  assert.match(renderRows(withConfig, { theme, now: NOW })[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(13m\)/);
+  assert.match(renderRows(soon, { theme, now: NOW })[1], /\x1b\[38;2;223;164;70mAsr 15:07 \(13m\)/);
+  // Snapshot config also wins over an explicit caller override.
+  assert.match(renderRows(withConfig, { theme, now: NOW, escalateMinutes: 60 })[1], /\x1b\[38;2;126;231;135mAsr 15:07 \(13m\)/);
+});
+
 test("parseSnapshot: byRepo keeps valid money windows, skips invalid ones", () => {
   const raw = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
   raw["asl/snapshot"].money.byRepo = {
