@@ -68,6 +68,7 @@ export interface AslSnapshot {
   opencode?: AslProvider;
   deen?: AslDeen;
   errors?: { zai?: string | null; opencode?: string | null; deen?: string | null; money?: string | null };
+  config?: { escalateMinutes?: number };
 }
 
 const SNAPSHOT_KEY = "asl/snapshot";
@@ -198,6 +199,11 @@ export function parseSnapshot(raw: string): AslSnapshot | null {
   if (oc) snap.opencode = oc;
   const d = deen((s as Record<string, unknown>).deen);
   if (d) snap.deen = d;
+  const cfg = (s as Record<string, unknown>).config;
+  if (typeof cfg === "object" && cfg !== null) {
+    const minutes = num((cfg as Record<string, unknown>).escalateMinutes);
+    if (minutes !== undefined && minutes > 0) snap.config = { escalateMinutes: minutes };
+  }
   return snap;
 }
 

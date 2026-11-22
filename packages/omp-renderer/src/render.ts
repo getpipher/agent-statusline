@@ -109,8 +109,8 @@ export function infoLine(theme: SlTheme, snap: AslSnapshot, sep: string, accent:
 }
 
 // Escalation band: when the next prayer is within escalateMinutes, its
-// countdown cell tints warning instead of success (renderer-local default 30 —
-// the Tern plugin's asl/config default; the snapshot carries no config).
+// countdown cell tints warning instead of success. The snapshot's live config
+// wins; the renderer-local default stays the fallback for direct callers.
 const DEFAULT_ESCALATE_MINUTES = 30;
 
 export function prayerLine(
@@ -200,9 +200,10 @@ export function renderRows(snap: AslSnapshot, env: RenderEnv): string[] {
   const { theme, now } = env;
   const sep = theme.fg("dim", " · ");
   const accent = env.accent ?? null;
+  const escalateMinutes = snap.config?.escalateMinutes ?? env.escalateMinutes;
   const lines: string[] = [];
   lines.push(infoLine(theme, snap, sep, accent, now));
-  if (snap.deen?.prayers.length) lines.push(prayerLine(theme, snap.deen, sep, accent, env.escalateMinutes, now, snap.updatedMs));
+  if (snap.deen?.prayers.length) lines.push(prayerLine(theme, snap.deen, sep, accent, escalateMinutes, now, snap.updatedMs));
   if (snap.money) {
     const money = moneyLine(theme, snap.money, sep, accent, env.repo);
     if (money) lines.push(money);

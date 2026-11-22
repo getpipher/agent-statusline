@@ -14,6 +14,7 @@
 local format = require("./lib/format")
 local windows = require("./lib/windows")
 local keysStore = require("./lib/keys")
+local bridge = require("./lib/bridge")
 
 type AslWindow = { label: string, usagePct: number, elapsedPct: number, paceOverSec: number, resetMs: number }
 
@@ -438,9 +439,11 @@ tern.chrome.widget("quota", {
 
 -- Refresh button on the widget's hover card (this half offers the widget, so
 -- widget_action lands here). Truthy return consumes the click.
-tern.on("widget_action", function(ev, _cx)
+tern.on("widget_action", function(ev, cx)
 	if type(ev) == "table" and ev.widget == "quota" and ev.act == "refresh" then
-		pcall(tern.kv.set, "asl/refresh-request", epochMs())
+		if not bridge.requestRefresh() then
+			cx:toast("error", "Refresh request failed — no channel landed")
+		end
 		return true
 	end
 	return false
@@ -466,8 +469,11 @@ tern.command({
 	id = "refresh",
 	title = "Refresh",
 	run = function(cx)
-		pcall(tern.kv.set, "asl/refresh-request", epochMs())
-		cx:toast("info", "Refresh requested")
+		if bridge.requestRefresh() then
+			cx:toast("info", "Refresh requested")
+		else
+			cx:toast("error", "Refresh request failed — no channel landed")
+		end
 	end,
 })
 
@@ -495,7 +501,7 @@ tern.command({
 					keys.opencode = oc
 				end
 				local landed = keysStore.store(keys)
-				pcall(tern.kv.set, "asl/refresh-request", epochMs())
+				bridge.requestRefresh()
 				if landed then
 					cx2:toast("success", "Keys stored — quota polls forced")
 				else
@@ -527,7 +533,7 @@ tern.command({
 			end
 			keys.opencode = key
 			local landed = keysStore.store(keys)
-			pcall(tern.kv.set, "asl/refresh-request", epochMs())
+			bridge.requestRefresh()
 			if landed then
 				cx1:toast("success", "OpenCode Go key stored — quota poll forced")
 			else
@@ -549,11 +555,7 @@ tern.command({
 				if type(value) ~= "string" or value == "" then
 					return
 				end
-				local cfg: any = {}
-				local okC, existing = pcall(tern.kv.get, "asl/config")
-				if okC and type(existing) == "table" then
-					cfg = existing
-				end
+				local cfg: any = bridge.readConfig()
 				if key == "escalateMinutes" or key == "zaiPollMs" or key == "opencodePollMs" then
 					cfg[key] = tonumber(value)
 					if cfg[key] == nil then
@@ -563,9 +565,13 @@ tern.command({
 				else
 					cfg[key] = value
 				end
-				tern.kv.set("asl/config", cfg)
-				pcall(tern.kv.set, "asl/refresh-request", epochMs())
-				cx2:toast("success", key .. " = " .. value)
+				local landed = bridge.storeConfig(cfg)
+				bridge.requestRefresh()
+				if landed then
+					cx2:toast("success", key .. " = " .. value)
+				else
+					cx2:toast("error", "Config storage failed — no channel landed")
+				end
 			end)
 		end)
 	end,

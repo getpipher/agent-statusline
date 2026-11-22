@@ -12,6 +12,7 @@ local deen = require("./lib/deen")
 local money = require("./lib/money")
 local format = require("./lib/format")
 local windows = require("./lib/windows")
+local bridge = require("./lib/bridge")
 
 local seq = 0
 local snapshot: any = nil
@@ -27,6 +28,10 @@ local function publish()
 	seq += 1
 	snapshot.seq = seq
 	snapshot.updatedMs = epochMs()
+	local config = bridge.readConfig()
+	local minutes = config.escalateMinutes
+	snapshot.config = if type(minutes) == "number" and minutes == minutes and minutes ~= math.huge and minutes ~= -math.huge and minutes > 0
+		then { escalateMinutes = minutes } else nil
 	pcall(tern.kv.set, "asl/snapshot", snapshot)
 end
 
@@ -98,8 +103,8 @@ end)
 -- poller. deen also watches the stamp itself; forcing it here is idempotent.
 local lastRefreshHandled = 0
 local function pollRefreshRequest()
-	local ok, v = pcall(tern.kv.get, "asl/refresh-request")
-	if ok and type(v) == "number" and v > lastRefreshHandled then
+	local v = bridge.readRefresh()
+	if v ~= nil and v > lastRefreshHandled then
 		lastRefreshHandled = v
 		zai.refresh()
 		opencode.refresh()
