@@ -34,9 +34,10 @@ interface SlCtx {
   // omp-native model facade; absent → provider reads as undefined and BOTH
   // providers' rows show (inert-adapter: visible beats vanishing).
   models?: { current(): SlModel | null };
-  // omp-native session facade — the session NAME feeds the accent hash.
+  // omp-native session facade — the session NAME feeds the accent hash, and
+  // getCwd() is the session's cwd (the process cwd is only the fallback).
   // Optional: unnamed sessions render tokens-only (accent degrades, nothing crashes).
-  sessionManager?: { getSessionName?(): string | undefined };
+  sessionManager?: { getSessionName?(): string | undefined; getCwd?(): string };
   // Managed timers (omp ExtensionContext): throw/rejection routes through the
   // extension error channel instead of uncaughtException session teardown;
   // unref'd + auto-cleared on session_shutdown. Optional → raw unref'd global
@@ -46,6 +47,10 @@ interface SlCtx {
 }
 interface SlApi {
   on(event: "session_start" | "model_select", handler: (event: unknown, ctx: SlCtx) => void): void;
+}
+
+export function currentRepoName(ctx: Pick<SlCtx, "sessionManager"> | null, fallbackCwd: string): string {
+  return basename(ctx?.sessionManager?.getCwd?.() ?? fallbackCwd);
 }
 
 const WIDGET_NAME = "asl";
@@ -69,7 +74,7 @@ export default function agentStatusline(pi: SlApi): void {
     // factory calls, so /theme switches re-dress on the next tick). Session
     // renames re-roll the hue at the next tick — no rename event.
     const accent: AccentFn | null = resolveAccent(true, ctx?.sessionManager?.getSessionName?.(), theme.sessionAccentInputs);
-    return renderRows(snap, { theme, now: Date.now(), provider, stamp, accent, repo: basename(process.cwd()) });
+    return renderRows(snap, { theme, now: Date.now(), provider, stamp, accent, repo: currentRepoName(ctx, process.cwd()) });
   }
 
   function renderWidget(): void {

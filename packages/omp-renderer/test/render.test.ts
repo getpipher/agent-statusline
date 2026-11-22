@@ -11,6 +11,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSnapshot, snapshotPath, createSnapshotReader } from "../src/read.ts";
 import { renderRows, moneyLine, heat, paceFromOverSec, zaiRelevant, opencodeRelevant, type SlTheme } from "../src/render.ts";
+import { currentRepoName } from "../src/index.ts";
 import { getSessionAccentHex, nameToHash } from "../src/accent.ts";
 import type { AslSnapshot } from "../src/read.ts";
 
@@ -277,6 +278,13 @@ test("window edges: >100% reads 100%+, zero pace reads `0m under`, heat bands", 
   assert.deepEqual(paceFromOverSec(-90 * 60), { text: "1h 30m under", token: "success" });
   assert.deepEqual(paceFromOverSec(0), { text: "0m under", token: "success" });
   assert.deepEqual(paceFromOverSec(3 * 86400 + 7200), { text: "3d 2h over", token: "warning" });
+});
+
+test("currentRepoName: session cwd wins over the process fallback", () => {
+  const session = { sessionManager: { getCwd: () => "/Users/rector/local-dev/getpipher/agent-statusline" } };
+  assert.equal(currentRepoName(session, "/Users/rector/local-dev/rextorsec"), "agent-statusline");
+  assert.equal(currentRepoName(null, "/Users/rector/local-dev/rextorsec"), "rextorsec");
+  assert.equal(currentRepoName({ sessionManager: {} }, "/Users/rector/local-dev/rextorsec"), "rextorsec");
 });
 
 test("accent port: golden vectors pin the oh-my-pi/catppuccin drift guard", () => {
