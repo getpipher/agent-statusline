@@ -70,6 +70,14 @@ test("256-color SGR → undefined (truecolor-only by design)", () => {
   assert.strictEqual(deriveAccentInputs(stub), undefined);
 });
 
+test("out-of-range channel (>255) drops the token", () => {
+  const stub: SlTheme = { dark: true, fg: (token, s) => (token === "success" ? `\x1b[38;2;800;8;8m${s}\x1b[39m` : colorized(token, s)) };
+  const inputs = deriveAccentInputs(stub);
+  assert.ok(inputs, "one malformed collision token must not kill the inputs");
+  // 800 = 0x320: with the guard gone the poisoned entry is 7-digit "#3200808".
+  assert.deepStrictEqual(inputs.colorHexes, ["#dfa446", "#de585c", "#89dceb", "#cdd6f4"]);
+});
+
 test("light theme (dark flag false) → undefined (dark-only scope)", () => {
   const stub: SlTheme = { dark: false, fg: colorized };
   assert.strictEqual(deriveAccentInputs(stub), undefined);
