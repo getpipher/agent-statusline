@@ -12,6 +12,7 @@ import { createSnapshotReader } from "./read.ts";
 import { basename } from "node:path";
 import { renderRows, type SlTheme, type VersionStamp } from "./render.ts";
 import { resolveAccent, type AccentFn } from "./accent.ts";
+import { deriveAccentInputs } from "./theme-inputs.ts";
 import { aslVersion, ompVersion, ternVersion } from "./versions.ts";
 
 // --- omp extension API (structural; no host import — copied from omp-statusline v0.8.12) ---
@@ -73,7 +74,7 @@ export default function agentStatusline(pi: SlApi): void {
     // Option A accent, resolved fresh per render (omp re-hands the theme on
     // factory calls, so /theme switches re-dress on the next tick). Session
     // renames re-roll the hue at the next tick — no rename event.
-    const accent: AccentFn | null = resolveAccent(true, ctx?.sessionManager?.getSessionName?.(), theme.sessionAccentInputs);
+    const accent: AccentFn | null = resolveAccent(true, ctx?.sessionManager?.getSessionName?.(), theme.sessionAccentInputs ?? deriveAccentInputs(theme));
     return renderRows(snap, { theme, now: Date.now(), provider, stamp, accent, repo: currentRepoName(ctx, process.cwd()) });
   }
 

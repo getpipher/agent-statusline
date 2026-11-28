@@ -29,8 +29,13 @@ export interface SlTheme {
   // returns theme-colored ANSI — success/warning/error/accent/dim/text…
   fg(token: string, text: string): string;
   // Theme-derived accent inputs (mirrors omp's Theme.sessionAccentInputs getter).
-  // Real omp theme instances carry it; stubs may omit → resolveAccent returns null.
+  // omp ≥ 19.2 dropped it from the widget facade (probe-verified 19.2.1 keys:
+  // name/dark/depth/symbols/json); index.ts falls back to deriveAccentInputs
+  // (theme-inputs.ts), which reads `dark` off this same facade.
   sessionAccentInputs?: SessionAccentInputs;
+  // Surface mode flag carried by the live 19.2.1 widget facade; absent →
+  // deriveAccentInputs degrades to undefined (dim accent).
+  dark?: boolean;
 }
 
 // Heat bands (omp-statusline heat): quota windows tint accent → warning (≥70) → error (≥90).
